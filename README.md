@@ -16,6 +16,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - Balances update only after confirmation.
 - React dashboard auto-refreshes balances and transaction status.
 - User wallet send attempts are declined with a contact admin message.
+- Telegram Mini App sessions restore the last opened wallet per Telegram user ID.
 
 ## Run locally
 

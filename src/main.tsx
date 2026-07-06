@@ -48,6 +48,26 @@ type WalletSecurity = {
   createdAt: number;
 };
 
+type TelegramWebApp = {
+  ready?: () => void;
+  expand?: () => void;
+  initDataUnsafe?: {
+    user?: {
+      id?: number;
+      username?: string;
+      first_name?: string;
+    };
+  };
+};
+
+declare global {
+  interface Window {
+    Telegram?: {
+      WebApp?: TelegramWebApp;
+    };
+  }
+}
+
 const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; usdRate: number }> = {
   ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500 },
   BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000 },
@@ -65,6 +85,7 @@ const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const DECLINED_MESSAGE = "Declined, contact admin.";
 const STATIC_DB_KEY = "xchain_wallet_static_db";
 const SECURITY_DB_KEY = "xchain_wallet_security";
+const SESSION_KEY = "xchain_wallet_session";
 const RECOVERY_WORDS = [
   "anchor", "april", "asset", "balance", "beacon", "bridge", "capital", "cipher", "cloud", "copper",
   "credit", "crystal", "domain", "drift", "ember", "engine", "fabric", "filter", "forest", "future",
@@ -98,6 +119,40 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
 
 function shouldUseStaticBackend() {
   return window.location.hostname.endsWith("github.io");
+}
+
+function getTelegramUserId() {
+  return window.Telegram?.WebApp?.initDataUnsafe?.user?.id?.toString() || null;
+}
+
+function getStorageScope() {
+  return getTelegramUserId() || "browser";
+}
+
+function scopedStorageKey(key: string) {
+  return `${key}_${getStorageScope()}`;
+}
+
+function readSavedWalletAddress() {
+  const stored = window.localStorage.getItem(scopedStorageKey(SESSION_KEY));
+  if (!stored) return "";
+
+  try {
+    return String(JSON.parse(stored).address || "");
+  } catch {
+    return "";
+  }
+}
+
+function saveWalletSession(address: string) {
+  window.localStorage.setItem(
+    scopedStorageKey(SESSION_KEY),
+    JSON.stringify({
+      address,
+      savedAt: Date.now(),
+      scope: getStorageScope()
+    })
+  );
 }
 
 function emptyChains(): Record<Chain, number> {
@@ -291,12 +346,12 @@ function formatTime(timestamp: number) {
 }
 
 function readSecurityDb(): Record<string, WalletSecurity> {
-  const stored = window.localStorage.getItem(SECURITY_DB_KEY);
+  const stored = window.localStorage.getItem(scopedStorageKey(SECURITY_DB_KEY));
   return stored ? JSON.parse(stored) : {};
 }
 
 function writeSecurityDb(securityDb: Record<string, WalletSecurity>) {
-  window.localStorage.setItem(SECURITY_DB_KEY, JSON.stringify(securityDb));
+  window.localStorage.setItem(scopedStorageKey(SECURITY_DB_KEY), JSON.stringify(securityDb));
 }
 
 function getWalletSecurity(address: string) {
@@ -342,6 +397,7 @@ function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [restoringSession, setRestoringSession] = useState(true);
 
   const selectedBalance = wallet?.chains[selectedChain] ?? 0;
   const activeMeta = CHAIN_META[selectedChain];
@@ -378,6 +434,8 @@ function App() {
   }, [loadTransactions, loadWallet, wallet]);
 
   useEffect(() => {
+    window.Telegram?.WebApp?.ready?.();
+    window.Telegram?.WebApp?.expand?.();
     api<{ chains: ChainInfo[] }>("/chains")
       .then((data) => {
         setChains(data.chains);
@@ -387,6 +445,30 @@ function App() {
       .then((data) => setOwnerAddress(data.address))
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const savedAddress = readSavedWalletAddress();
+
+    if (!savedAddress) {
+      setRestoringSession(false);
+      return;
+    }
+
+    api<User>("/wallet/import", {
+      method: "POST",
+      body: JSON.stringify({ address: savedAddress })
+    })
+      .then(async (user) => {
+        setWallet(user);
+        setWalletSecurity(getWalletSecurity(user.address));
+        await loadTransactions(user.address);
+        setNotice("Wallet session restored.");
+      })
+      .catch(() => {
+        window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
+      })
+      .finally(() => setRestoringSession(false));
+  }, [loadTransactions]);
 
   useEffect(() => {
     if (!wallet) return undefined;
@@ -430,6 +512,7 @@ function App() {
         body: JSON.stringify({ address: importAddress })
       });
       setWallet(user);
+      saveWalletSession(user.address);
       setWalletSecurity(getWalletSecurity(user.address));
       await loadTransactions(user.address);
       setNotice("Wallet imported. Unknown addresses are created with zero balances.");
@@ -500,6 +583,7 @@ function App() {
     }
 
     saveWalletSecurity(pendingSetupWallet.address, recoveryPhrase);
+    saveWalletSession(pendingSetupWallet.address);
     setWalletSecurity(getWalletSecurity(pendingSetupWallet.address));
     setWallet(pendingSetupWallet);
     setPendingSetupWallet(null);
@@ -524,7 +608,15 @@ function App() {
           ) : null}
         </div>
 
-        {pendingSetupWallet ? (
+        {restoringSession ? (
+          <div className="welcome">
+            <div className="orbital-wallet">
+              <Wallet size={44} />
+            </div>
+            <h1>Xchain Wallet</h1>
+            <p>Opening your saved wallet session.</p>
+          </div>
+        ) : pendingSetupWallet ? (
           <div className="setup-panel">
             <div className="section-title">
               <KeyRound size={18} />
