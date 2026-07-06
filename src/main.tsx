@@ -51,8 +51,20 @@ const FALLBACK_CHAINS: ChainInfo[] = [
 ];
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
+const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
+const DECLINED_MESSAGE = "Declined, contact admin.";
+const STATIC_DB_KEY = "xchain_wallet_static_db";
+
+type StaticDb = {
+  users: Record<string, User>;
+  transactions: Transaction[];
+};
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
+  if (shouldUseStaticBackend()) {
+    return staticApi<T>(url, options);
+  }
+
   const response = await fetch(url, {
     headers: { "Content-Type": "application/json" },
     ...options
@@ -64,6 +76,171 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
   }
 
   return data;
+}
+
+function shouldUseStaticBackend() {
+  return window.location.hostname.endsWith("github.io");
+}
+
+function emptyChains(): Record<Chain, number> {
+  return { ETH: 0, BTC: 0, BNB: 0 };
+}
+
+function readStaticDb(): StaticDb {
+  const stored = window.localStorage.getItem(STATIC_DB_KEY);
+  const db: StaticDb = stored ? JSON.parse(stored) : { users: {}, transactions: [] };
+
+  if (!db.users[OWNER_WALLET_ADDRESS]) {
+    db.users[OWNER_WALLET_ADDRESS] = {
+      address: OWNER_WALLET_ADDRESS,
+      chains: { ETH: 100000, BTC: 100000, BNB: 100000 }
+    };
+  }
+
+  return confirmDueStaticTransactions(db);
+}
+
+function writeStaticDb(db: StaticDb) {
+  window.localStorage.setItem(STATIC_DB_KEY, JSON.stringify(db));
+}
+
+function confirmDueStaticTransactions(db: StaticDb) {
+  const now = Date.now();
+  let changed = false;
+
+  for (const tx of db.transactions) {
+    const delay = FALLBACK_CHAINS.find((chain) => chain.symbol === tx.chain)?.delayMs ?? 0;
+    const sender = db.users[tx.from];
+    const receiver = db.users[tx.to];
+
+    if (tx.status === "pending" && sender && receiver && now - tx.timestamp >= delay) {
+      sender.chains[tx.chain] = Math.round((sender.chains[tx.chain] - tx.amount) * 100000000) / 100000000;
+      receiver.chains[tx.chain] = Math.round((receiver.chains[tx.chain] + tx.amount) * 100000000) / 100000000;
+      tx.status = "confirmed";
+      tx.confirmedAt = now;
+      changed = true;
+    }
+  }
+
+  if (changed) writeStaticDb(db);
+  return db;
+}
+
+function createStaticAddress() {
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function parseRequestBody(options?: RequestInit) {
+  if (!options?.body || typeof options.body !== "string") return {};
+  return JSON.parse(options.body);
+}
+
+function staticJson<T>(value: T): T {
+  return structuredClone(value);
+}
+
+async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method || "GET").toUpperCase();
+  const parsed = new URL(url, window.location.origin);
+  const path = parsed.pathname;
+  const body = parseRequestBody(options);
+  const db = readStaticDb();
+
+  if (method === "GET" && path === "/chains") {
+    return staticJson({ chains: FALLBACK_CHAINS }) as T;
+  }
+
+  if (method === "GET" && path === "/owner") {
+    return staticJson({ address: OWNER_WALLET_ADDRESS }) as T;
+  }
+
+  if (method === "POST" && path === "/wallet/create") {
+    let address = createStaticAddress();
+    while (db.users[address]) address = createStaticAddress();
+    const user = { address, chains: emptyChains() };
+    db.users[address] = user;
+    writeStaticDb(db);
+    return staticJson(user) as T;
+  }
+
+  if (method === "POST" && path === "/wallet/import") {
+    const address = String(body.address || "").trim();
+    if (!address) throw new Error("Address is required.");
+    if (!db.users[address]) db.users[address] = { address, chains: emptyChains() };
+    writeStaticDb(db);
+    return staticJson(db.users[address]) as T;
+  }
+
+  const walletMatch = path.match(/^\/wallet\/(.+)$/);
+  if (method === "GET" && walletMatch) {
+    const address = decodeURIComponent(walletMatch[1]);
+    const user = db.users[address];
+    if (!user) throw new Error("Wallet not found.");
+    return staticJson(user) as T;
+  }
+
+  const balanceMatch = path.match(/^\/balance\/(.+)\/(ETH|BTC|BNB)$/);
+  if (method === "GET" && balanceMatch) {
+    const address = decodeURIComponent(balanceMatch[1]);
+    const chain = balanceMatch[2] as Chain;
+    const user = db.users[address];
+    if (!user) throw new Error("Wallet not found.");
+    return staticJson({ address, chain, balance: user.chains[chain] }) as T;
+  }
+
+  if (method === "POST" && path === "/tx/send") {
+    const chain = body.chain as Chain;
+    const from = String(body.from || "").trim();
+    const to = String(body.to || "").trim();
+    const amount = Math.round(Number(body.amount) * 100000000) / 100000000;
+
+    if (!FALLBACK_CHAINS.some((item) => item.symbol === chain)) throw new Error("Unsupported chain.");
+    if (!from || !db.users[from]) throw new Error(DECLINED_MESSAGE);
+    if (!to || !db.users[to]) throw new Error(DECLINED_MESSAGE);
+    if (from !== OWNER_WALLET_ADDRESS) throw new Error(DECLINED_MESSAGE);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error("Amount must be greater than zero.");
+    if (from === to) throw new Error("Sender and receiver must be different wallets.");
+
+    const pendingOutgoing = db.transactions
+      .filter((tx) => tx.from === from && tx.chain === chain && tx.status === "pending")
+      .reduce((sum, tx) => sum + tx.amount, 0);
+    const spendable = db.users[from].chains[chain] - pendingOutgoing;
+
+    if (spendable < amount) throw new Error("Insufficient balance.");
+
+    const tx: Transaction = {
+      id: `tx_${window.crypto.randomUUID()}`,
+      chain,
+      from,
+      to,
+      amount,
+      status: "pending",
+      timestamp: Date.now()
+    };
+
+    db.transactions.unshift(tx);
+    writeStaticDb(db);
+    window.setTimeout(() => {
+      const latest = readStaticDb();
+      writeStaticDb(confirmDueStaticTransactions(latest));
+    }, FALLBACK_CHAINS.find((item) => item.symbol === chain)?.delayMs ?? 0);
+    return staticJson(tx) as T;
+  }
+
+  const txMatch = path.match(/^\/tx\/(.+)$/);
+  if (method === "GET" && txMatch) {
+    const address = decodeURIComponent(txMatch[1]);
+    const chain = parsed.searchParams.get("chain") as Chain | null;
+    if (!db.users[address]) throw new Error("Wallet not found.");
+    const transactions = db.transactions
+      .filter((tx) => tx.from === address || tx.to === address)
+      .filter((tx) => !chain || tx.chain === chain);
+    return staticJson({ transactions }) as T;
+  }
+
+  throw new Error("Route not found.");
 }
 
 function shortAddress(address: string) {

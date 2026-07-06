@@ -60,6 +60,12 @@ Build command: npm install && npm run build
 Start command: node server.js
 ```
 
+## GitHub Pages Preview
+
+GitHub Pages can host only the static frontend, not `node server.js`. This repo includes a Pages workflow and a browser-local wallet backend so the app can be previewed on GitHub Pages before moving to Render.
+
+For free GitHub Pages hosting, the repository must be public. Private repository Pages requires a paid GitHub plan.
+
 ## API
 
 ```text
