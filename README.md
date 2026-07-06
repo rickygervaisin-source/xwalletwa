@@ -7,6 +7,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - Create wallets with zero initial balances on ETH, BTC, and BNB.
 - Import any wallet address into the in-memory system, also starting at zero if it does not exist.
 - Owner wallet can send tokens to existing user wallets.
+- New wallet creation includes a recovery phrase and password setup flow.
 - Separate balances and histories for Ethereum, Bitcoin, and BNB Chain.
 - Pending transactions confirm after chain-specific delays:
   - ETH: 3 seconds

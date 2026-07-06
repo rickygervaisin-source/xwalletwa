@@ -5,10 +5,14 @@ import {
   CircleCheck,
   Clock3,
   Copy,
+  Eye,
+  EyeOff,
   Import,
+  KeyRound,
   Plus,
   RefreshCw,
   Send,
+  Settings,
   Wallet
 } from "lucide-react";
 import "./styles.css";
@@ -38,6 +42,12 @@ type ChainInfo = {
   delayMs: number;
 };
 
+type WalletSecurity = {
+  recoveryPhrase: string[];
+  passwordSet: boolean;
+  createdAt: number;
+};
+
 const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; usdRate: number }> = {
   ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500 },
   BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000 },
@@ -54,6 +64,14 @@ const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const DECLINED_MESSAGE = "Declined, contact admin.";
 const STATIC_DB_KEY = "xchain_wallet_static_db";
+const SECURITY_DB_KEY = "xchain_wallet_security";
+const RECOVERY_WORDS = [
+  "anchor", "april", "asset", "balance", "beacon", "bridge", "capital", "cipher", "cloud", "copper",
+  "credit", "crystal", "domain", "drift", "ember", "engine", "fabric", "filter", "forest", "future",
+  "galaxy", "harbor", "index", "ivory", "kernel", "ledger", "legacy", "matrix", "member", "motion",
+  "native", "object", "orbit", "packet", "planet", "public", "quantum", "random", "rocket", "secure",
+  "signal", "silver", "stable", "token", "trust", "vault", "vector", "wallet"
+];
 
 type StaticDb = {
   users: Record<string, User>;
@@ -272,8 +290,46 @@ function formatTime(timestamp: number) {
   }).format(timestamp);
 }
 
+function readSecurityDb(): Record<string, WalletSecurity> {
+  const stored = window.localStorage.getItem(SECURITY_DB_KEY);
+  return stored ? JSON.parse(stored) : {};
+}
+
+function writeSecurityDb(securityDb: Record<string, WalletSecurity>) {
+  window.localStorage.setItem(SECURITY_DB_KEY, JSON.stringify(securityDb));
+}
+
+function getWalletSecurity(address: string) {
+  return readSecurityDb()[address] || null;
+}
+
+function saveWalletSecurity(address: string, recoveryPhrase: string[]) {
+  const securityDb = readSecurityDb();
+  securityDb[address] = {
+    recoveryPhrase,
+    passwordSet: true,
+    createdAt: Date.now()
+  };
+  writeSecurityDb(securityDb);
+}
+
+function generateRecoveryPhrase() {
+  const bytes = new Uint8Array(12);
+  window.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => RECOVERY_WORDS[byte % RECOVERY_WORDS.length]);
+}
+
 function App() {
   const [wallet, setWallet] = useState<User | null>(null);
+  const [pendingSetupWallet, setPendingSetupWallet] = useState<User | null>(null);
+  const [recoveryPhrase, setRecoveryPhrase] = useState<string[]>([]);
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [phraseSaved, setPhraseSaved] = useState(false);
+  const [showPhrase, setShowPhrase] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [settingsPhraseVisible, setSettingsPhraseVisible] = useState(false);
+  const [walletSecurity, setWalletSecurity] = useState<WalletSecurity | null>(null);
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -334,6 +390,7 @@ function App() {
 
   useEffect(() => {
     if (!wallet) return undefined;
+    setWalletSecurity(getWalletSecurity(wallet.address));
     refresh();
     const timer = window.setInterval(refresh, 2500);
     return () => window.clearInterval(timer);
@@ -345,10 +402,16 @@ function App() {
     setLoading(true);
     try {
       const user = await api<User>("/wallet/create", { method: "POST" });
-      setWallet(user);
+      setPendingSetupWallet(user);
+      setRecoveryPhrase(generateRecoveryPhrase());
+      setPhraseSaved(false);
+      setShowPhrase(true);
+      setPassword("");
+      setConfirmPassword("");
+      setWallet(null);
       setTransactions([]);
       setImportAddress("");
-      setNotice("Wallet created with zero balances on every chain.");
+      setNotice("Wallet created. Complete security setup to continue.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create wallet.");
     } finally {
@@ -367,6 +430,7 @@ function App() {
         body: JSON.stringify({ address: importAddress })
       });
       setWallet(user);
+      setWalletSecurity(getWalletSecurity(user.address));
       await loadTransactions(user.address);
       setNotice("Wallet imported. Unknown addresses are created with zero balances.");
     } catch (err) {
@@ -416,6 +480,35 @@ function App() {
     setNotice("Address copied.");
   }
 
+  function completeWalletSetup(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (!pendingSetupWallet) return;
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+    if (!phraseSaved) {
+      setError("Confirm that you saved your recovery phrase.");
+      return;
+    }
+
+    saveWalletSecurity(pendingSetupWallet.address, recoveryPhrase);
+    setWalletSecurity(getWalletSecurity(pendingSetupWallet.address));
+    setWallet(pendingSetupWallet);
+    setPendingSetupWallet(null);
+    setPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setNotice("Security setup complete. Wallet balances start at zero.");
+  }
+
   return (
     <main className="app-shell">
       <section className="wallet-panel">
@@ -431,7 +524,61 @@ function App() {
           ) : null}
         </div>
 
-        {!wallet ? (
+        {pendingSetupWallet ? (
+          <div className="setup-panel">
+            <div className="section-title">
+              <KeyRound size={18} />
+              <h2>Secure your wallet</h2>
+            </div>
+            <p className="setup-copy">Write down your recovery phrase and create a wallet password.</p>
+
+            <div className={showPhrase ? "phrase-grid" : "phrase-grid hidden-phrase"}>
+              {recoveryPhrase.map((word, index) => (
+                <div className="phrase-word" key={`${word}-${index}`}>
+                  <span>{index + 1}</span>
+                  <strong>{showPhrase ? word : "••••••"}</strong>
+                </div>
+              ))}
+            </div>
+
+            <button className="secondary-button" type="button" onClick={() => setShowPhrase((visible) => !visible)}>
+              {showPhrase ? <EyeOff size={18} /> : <Eye size={18} />}
+              {showPhrase ? "Hide phrase" : "Reveal phrase"}
+            </button>
+
+            <form className="setup-form" onSubmit={completeWalletSetup}>
+              <label className="check-row">
+                <input type="checkbox" checked={phraseSaved} onChange={(event) => setPhraseSaved(event.target.checked)} />
+                I saved my recovery phrase
+              </label>
+              <label>
+                New password
+                <input
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Minimum 8 characters"
+                />
+              </label>
+              <label>
+                Confirm password
+                <input
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Repeat password"
+                />
+              </label>
+              <button className="secondary-button" type="button" onClick={() => setShowPassword((visible) => !visible)}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                {showPassword ? "Hide password" : "Show password"}
+              </button>
+              <button className="primary-button" type="submit" disabled={loading}>
+                <Wallet size={18} /> Open wallet
+              </button>
+            </form>
+          </div>
+        ) : !wallet ? (
           <div className="welcome">
             <div className="orbital-wallet">
               <Wallet size={44} />
@@ -535,6 +682,31 @@ function App() {
                   <Copy size={18} /> Copy address
                 </button>
                 {isOwnerWallet ? <p className="owner-note">Owner wallet can send to created Xchain accounts.</p> : null}
+              </div>
+
+              <div className="settings-card">
+                <div className="section-title">
+                  <Settings size={18} />
+                  <h2>Settings</h2>
+                </div>
+                <div className="settings-row">
+                  <span>Password</span>
+                  <strong>{walletSecurity?.passwordSet ? "Enabled" : "Not set"}</strong>
+                </div>
+                <div className="settings-row">
+                  <span>Recovery phrase</span>
+                  <button type="button" onClick={() => setSettingsPhraseVisible((visible) => !visible)}>
+                    {settingsPhraseVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                    {settingsPhraseVisible ? "Hide" : "Reveal"}
+                  </button>
+                </div>
+                {settingsPhraseVisible && walletSecurity ? (
+                  <div className="settings-phrase">
+                    {walletSecurity.recoveryPhrase.map((word, index) => (
+                      <span key={`${word}-${index}`}>{index + 1}. {word}</span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           </>
