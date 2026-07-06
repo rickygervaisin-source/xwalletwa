@@ -3,11 +3,14 @@ import cors from "cors";
 import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_DATA_FILE = fs.existsSync("/data") ? "/data/xchain-db.json" : path.join(__dirname, "data", "xchain-db.json");
+const DATA_FILE = process.env.DATA_FILE || DEFAULT_DATA_FILE;
 
 const CHAINS = {
   ETH: { name: "Ethereum", delayMs: 3000 },
@@ -24,6 +27,30 @@ const db = {
   transactions: []
 };
 
+function ensureDataDirectory() {
+  fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+}
+
+function serializeDb() {
+  return {
+    users: Array.from(db.users.values()),
+    transactions: db.transactions
+  };
+}
+
+function saveDb() {
+  ensureDataDirectory();
+  fs.writeFileSync(DATA_FILE, JSON.stringify(serializeDb(), null, 2));
+}
+
+function loadDb() {
+  if (!fs.existsSync(DATA_FILE)) return;
+
+  const stored = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  db.users = new Map((stored.users || []).map((user) => [user.address, createUserRecord(user.address, user.chains)]));
+  db.transactions = Array.isArray(stored.transactions) ? stored.transactions : [];
+}
+
 function createUserRecord(address, balances = ZERO_BALANCES) {
   return {
     address,
@@ -36,6 +63,8 @@ function createUserRecord(address, balances = ZERO_BALANCES) {
 }
 
 function seedOwnerWallet() {
+  if (db.users.has(OWNER_WALLET_ADDRESS)) return;
+
   db.users.set(
     OWNER_WALLET_ADDRESS,
     createUserRecord(OWNER_WALLET_ADDRESS, {
@@ -100,10 +129,20 @@ function confirmTransaction(txId) {
   receiver.chains[tx.chain] = Math.round((receiver.chains[tx.chain] + tx.amount) * 100000000) / 100000000;
   tx.status = "confirmed";
   tx.confirmedAt = Date.now();
+  saveDb();
 }
 
 function queueConfirmation(tx) {
-  setTimeout(() => confirmTransaction(tx.id), CHAINS[tx.chain].delayMs);
+  const remainingDelay = Math.max(0, CHAINS[tx.chain].delayMs - (Date.now() - tx.timestamp));
+  setTimeout(() => confirmTransaction(tx.id), remainingDelay);
+}
+
+function queuePendingConfirmations() {
+  for (const tx of db.transactions) {
+    if (tx.status === "pending" && isSupportedChain(tx.chain)) {
+      queueConfirmation(tx);
+    }
+  }
 }
 
 function getPendingOutgoingTotal(address, chain) {
@@ -125,10 +164,14 @@ function createPendingTransaction({ chain, from, to, amount }) {
 
   db.transactions.unshift(tx);
   queueConfirmation(tx);
+  saveDb();
   return tx;
 }
 
+loadDb();
 seedOwnerWallet();
+saveDb();
+queuePendingConfirmations();
 
 app.use(cors());
 app.use(express.json());
@@ -155,6 +198,7 @@ app.post("/wallet/create", (_req, res) => {
 
   const user = createUserRecord(address);
   db.users.set(address, user);
+  saveDb();
 
   res.status(201).json(publicUser(user));
 });
@@ -168,6 +212,7 @@ app.post("/wallet/import", (req, res) => {
 
   if (!db.users.has(address)) {
     db.users.set(address, createUserRecord(address));
+    saveDb();
   }
 
   res.json(publicUser(db.users.get(address)));

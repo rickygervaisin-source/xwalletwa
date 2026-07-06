@@ -17,6 +17,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - React dashboard auto-refreshes balances and transaction status.
 - User wallet send attempts are declined with a contact admin message.
 - Telegram Mini App sessions restore the last opened wallet per Telegram user ID.
+- Wallets and activity history persist to a local JSON database file on the server.
 
 ## Run locally
 
@@ -61,6 +62,8 @@ Suggested host settings:
 Build command: npm install && npm run build
 Start command: node server.js
 ```
+
+On Railway, add a mounted volume at `/data` if you want activity history to survive service rebuilds or container replacement.
 
 ## GitHub Pages Preview
 
