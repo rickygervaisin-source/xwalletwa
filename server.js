@@ -63,12 +63,13 @@ function loadDb() {
   if (!fs.existsSync(DATA_FILE)) return;
 
   const stored = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  db.users = new Map((stored.users || []).map((user) => [user.address, createUserRecord(user.address, user.chains)]));
+  db.users = new Map((stored.users || []).map((user) => [user.address, createUserRecord(user.address, user.chains, user.accountId)]));
   db.transactions = Array.isArray(stored.transactions) ? stored.transactions : [];
 }
 
-function createUserRecord(address, balances = ZERO_BALANCES) {
+function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId()) {
   return {
+    accountId,
     address,
     chains: {
       ETH: Number(balances.ETH) || 0,
@@ -76,6 +77,27 @@ function createUserRecord(address, balances = ZERO_BALANCES) {
       BNB: Number(balances.BNB) || 0
     }
   };
+}
+
+function generateAccountId(seed = "") {
+  if (seed) {
+    const cleanSeed = String(seed).replace(/[^a-zA-Z0-9]/g, "").slice(-12);
+    if (cleanSeed) return `XW-${cleanSeed}`;
+  }
+
+  return `XW-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
+function resolveAccountId(req, existingUser) {
+  if (existingUser?.accountId) return existingUser.accountId;
+
+  const telegramId = req.get("x-telegram-user-id");
+  if (telegramId) return generateAccountId(telegramId);
+
+  const requestedAccountId = normalizeAddress(req.body?.accountId);
+  if (requestedAccountId) return requestedAccountId;
+
+  return generateAccountId();
 }
 
 function seedOwnerWallet() {
@@ -109,6 +131,7 @@ function normalizeAddress(address) {
 
 function publicUser(user) {
   return {
+    accountId: user.accountId,
     address: user.address,
     chains: { ...user.chains }
   };
@@ -264,11 +287,11 @@ app.get("/market", async (_req, res) => {
   });
 });
 
-app.post("/wallet/create", (_req, res) => {
+app.post("/wallet/create", (req, res) => {
   let address = generateAddress();
   while (db.users.has(address)) address = generateAddress();
 
-  const user = createUserRecord(address);
+  const user = createUserRecord(address, ZERO_BALANCES, resolveAccountId(req));
   db.users.set(address, user);
   saveDb();
 
@@ -283,8 +306,14 @@ app.post("/wallet/import", (req, res) => {
   }
 
   if (!db.users.has(address)) {
-    db.users.set(address, createUserRecord(address));
+    db.users.set(address, createUserRecord(address, ZERO_BALANCES, resolveAccountId(req)));
     saveDb();
+  } else {
+    const user = db.users.get(address);
+    if (!user.accountId) {
+      user.accountId = resolveAccountId(req, user);
+      saveDb();
+    }
   }
 
   res.json(publicUser(db.users.get(address)));

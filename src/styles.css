@@ -242,6 +242,10 @@ select:focus {
   font-size: 0.8rem;
 }
 
+.wallet-address-label {
+  margin-top: 14px;
+}
+
 .chain-tabs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

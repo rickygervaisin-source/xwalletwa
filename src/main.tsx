@@ -23,6 +23,7 @@ type Chain = "ETH" | "BTC" | "BNB";
 type TxStatus = "pending" | "confirmed";
 
 type User = {
+  accountId: string;
   address: string;
   chains: Record<Chain, number>;
 };
@@ -125,7 +126,10 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
   }
 
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...identityHeaders()
+    },
     ...options
   });
   const data = await response.json().catch(() => ({}));
@@ -143,6 +147,29 @@ function shouldUseStaticBackend() {
 
 function getTelegramUserId() {
   return window.Telegram?.WebApp?.initDataUnsafe?.user?.id?.toString() || null;
+}
+
+function getBrowserAccountId() {
+  const key = "xchain_browser_account_id";
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+
+  const generated = `XW-${window.crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  window.localStorage.setItem(key, generated);
+  return generated;
+}
+
+function getClientAccountId() {
+  const telegramUserId = getTelegramUserId();
+  return telegramUserId ? `XW-${telegramUserId}` : getBrowserAccountId();
+}
+
+function identityHeaders() {
+  const telegramUserId = getTelegramUserId();
+  return {
+    "x-account-id": getClientAccountId(),
+    ...(telegramUserId ? { "x-telegram-user-id": telegramUserId } : {})
+  };
 }
 
 function getStorageScope() {
@@ -185,6 +212,7 @@ function readStaticDb(): StaticDb {
 
   if (!db.users[OWNER_WALLET_ADDRESS]) {
     db.users[OWNER_WALLET_ADDRESS] = {
+      accountId: "XW-OWNER",
       address: OWNER_WALLET_ADDRESS,
       chains: { ETH: 100000, BTC: 100000, BNB: 100000 }
     };
@@ -256,7 +284,7 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
   if (method === "POST" && path === "/wallet/create") {
     let address = createStaticAddress();
     while (db.users[address]) address = createStaticAddress();
-    const user = { address, chains: emptyChains() };
+    const user = { accountId: getClientAccountId(), address, chains: emptyChains() };
     db.users[address] = user;
     writeStaticDb(db);
     return staticJson(user) as T;
@@ -265,7 +293,7 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
   if (method === "POST" && path === "/wallet/import") {
     const address = String(body.address || "").trim();
     if (!address) throw new Error("Address is required.");
-    if (!db.users[address]) db.users[address] = { address, chains: emptyChains() };
+    if (!db.users[address]) db.users[address] = { accountId: getClientAccountId(), address, chains: emptyChains() };
     writeStaticDb(db);
     return staticJson(db.users[address]) as T;
   }
@@ -764,7 +792,11 @@ function App() {
         ) : (
           <>
             <div className="account-card">
-              <span className="eyebrow">Wallet address</span>
+              <span className="eyebrow">Account ID</span>
+              <div className="address-row">
+                <strong>{wallet.accountId}</strong>
+              </div>
+              <span className="eyebrow wallet-address-label">Wallet address</span>
               <div className="address-row">
                 <strong>{shortAddress(wallet.address)}</strong>
                 <button className="icon-button" type="button" onClick={copyAddress} aria-label="Copy address">
@@ -898,6 +930,10 @@ function App() {
                 <div className="section-title">
                   <Settings size={18} />
                   <h2>Settings</h2>
+                </div>
+                <div className="settings-row">
+                  <span>Account ID</span>
+                  <strong>{wallet.accountId}</strong>
                 </div>
                 <div className="settings-row">
                   <span>Password</span>
