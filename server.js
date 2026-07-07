@@ -18,9 +18,25 @@ const CHAINS = {
   BNB: { name: "BNB Chain", delayMs: 1000 }
 };
 
+const COINGECKO_IDS = {
+  ETH: "ethereum",
+  BTC: "bitcoin",
+  BNB: "binancecoin"
+};
+
+const FALLBACK_MARKET = {
+  ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
+  BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
+  BNB: { usd: 600, usd_24h_change: 0, prices: [] }
+};
+
 const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0 });
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const DECLINED_MESSAGE = "Declined, contact admin.";
+const marketCache = {
+  value: null,
+  updatedAt: 0
+};
 
 const db = {
   users: new Map(),
@@ -110,6 +126,54 @@ function parsePositiveAmount(value) {
   return Math.round(amount * 100000000) / 100000000;
 }
 
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      "user-agent": "xchain-wallet-demo"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Market request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function getMarketData() {
+  if (marketCache.value && Date.now() - marketCache.updatedAt < 60000) {
+    return marketCache.value;
+  }
+
+  try {
+    const ids = Object.values(COINGECKO_IDS).join(",");
+    const priceUrl = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`;
+    const priceData = await fetchJson(priceUrl);
+
+    const entries = await Promise.all(
+      Object.entries(COINGECKO_IDS).map(async ([chain, id]) => {
+        const chart = await fetchJson(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=1`);
+        return [
+          chain,
+          {
+            usd: Number(priceData[id]?.usd) || FALLBACK_MARKET[chain].usd,
+            usd_24h_change: Number(priceData[id]?.usd_24h_change) || 0,
+            prices: Array.isArray(chart.prices) ? chart.prices.slice(-48).map((point) => Number(point[1])) : []
+          }
+        ];
+      })
+    );
+
+    marketCache.value = Object.fromEntries(entries);
+    marketCache.updatedAt = Date.now();
+    return marketCache.value;
+  } catch (error) {
+    console.warn(error.message);
+    return marketCache.value || FALLBACK_MARKET;
+  }
+}
+
 function confirmTransaction(txId) {
   const tx = db.transactions.find((item) => item.id === txId);
   if (!tx || tx.status !== "pending") return;
@@ -192,6 +256,14 @@ app.get("/owner", (_req, res) => {
   });
 });
 
+app.get("/market", async (_req, res) => {
+  res.json({
+    market: await getMarketData(),
+    source: "CoinGecko",
+    updatedAt: Date.now()
+  });
+});
+
 app.post("/wallet/create", (_req, res) => {
   let address = generateAddress();
   while (db.users.has(address)) address = generateAddress();
@@ -254,6 +326,7 @@ app.post("/tx/send", (req, res) => {
   const from = normalizeAddress(req.body?.from);
   const to = normalizeAddress(req.body?.to);
   const amount = parsePositiveAmount(req.body?.amount);
+  const destinationType = req.body?.destinationType === "paypal" ? "paypal" : "wallet";
 
   if (!isSupportedChain(chain)) {
     return res.status(400).json({ error: "Unsupported chain." });
@@ -264,6 +337,9 @@ app.post("/tx/send", (req, res) => {
   }
 
   if (!to || !db.users.has(to)) {
+    if (destinationType === "paypal") {
+      return res.status(400).json({ error: DECLINED_MESSAGE });
+    }
     return res.status(400).json({ error: DECLINED_MESSAGE });
   }
 
@@ -316,7 +392,7 @@ app.get("/tx/:address", (req, res) => {
 });
 
 app.use((req, res, next) => {
-  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner"];
+  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner", "/market"];
   if (apiPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     return res.status(404).json({ error: "Route not found." });
   }

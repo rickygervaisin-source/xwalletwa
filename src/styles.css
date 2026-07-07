@@ -279,6 +279,13 @@ select:focus {
   line-height: 1;
 }
 
+.balance-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .balance-line strong {
   font-size: 1rem;
 }
@@ -309,6 +316,112 @@ select:focus {
   font-weight: 650;
 }
 
+.market-change {
+  padding: 5px 8px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.market-change.up {
+  color: #bbf7d0;
+}
+
+.market-change.down {
+  color: #fecdd3;
+}
+
+.sparkline {
+  width: 100%;
+  height: 58px;
+  margin-top: 14px;
+  overflow: visible;
+}
+
+.sparkline polyline {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sparkline-up {
+  stroke: #bbf7d0;
+}
+
+.sparkline-down {
+  stroke: #fecdd3;
+}
+
+.sparkline-empty {
+  height: 34px;
+}
+
+.portfolio-card,
+.market-grid {
+  margin-top: 14px;
+}
+
+.portfolio-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #d7deea;
+  background: #ffffff;
+}
+
+.portfolio-card strong {
+  color: #121826;
+  font-size: 1.35rem;
+}
+
+.portfolio-card svg {
+  color: #1f7a6d;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.market-coin {
+  display: grid;
+  gap: 5px;
+  min-height: 84px;
+  padding: 10px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  color: #475569;
+  background: #ffffff;
+  text-align: left;
+}
+
+.market-coin.active {
+  border-color: #1f7a6d;
+  background: #ecfdf5;
+}
+
+.market-coin span {
+  font-weight: 850;
+  color: #121826;
+}
+
+.market-coin strong {
+  overflow-wrap: anywhere;
+  color: #1f7a6d;
+  font-size: 0.9rem;
+}
+
+.market-coin small {
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+
 .actions-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -323,6 +436,28 @@ select:focus {
   gap: 14px;
   padding: 16px;
   background: #ffffff;
+}
+
+.send-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 5px;
+  border-radius: 8px;
+  background: #e8eef6;
+}
+
+.send-mode-toggle button {
+  min-height: 38px;
+  padding: 0 10px;
+  color: #475569;
+  background: transparent;
+}
+
+.send-mode-toggle button.active {
+  color: #0f172a;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(42, 53, 79, 0.1);
 }
 
 .owner-note {
@@ -657,5 +792,9 @@ small {
   .tx-topline {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .market-grid {
+    grid-template-columns: 1fr;
   }
 }

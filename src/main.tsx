@@ -5,6 +5,7 @@ import {
   CircleCheck,
   Clock3,
   Copy,
+  CreditCard,
   Eye,
   EyeOff,
   Import,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Send,
   Settings,
+  TrendingUp,
   Wallet
 } from "lucide-react";
 import "./styles.css";
@@ -48,6 +50,18 @@ type WalletSecurity = {
   createdAt: number;
 };
 
+type ChainMarket = {
+  usd: number;
+  usd_24h_change: number;
+  prices: number[];
+};
+
+type MarketResponse = {
+  market: Record<Chain, ChainMarket>;
+  source: string;
+  updatedAt: number;
+};
+
 type TelegramWebApp = {
   ready?: () => void;
   expand?: () => void;
@@ -79,6 +93,12 @@ const FALLBACK_CHAINS: ChainInfo[] = [
   { symbol: "BTC", name: "Bitcoin", delayMs: 10000 },
   { symbol: "BNB", name: "BNB Chain", delayMs: 1000 }
 ];
+
+const FALLBACK_MARKET: Record<Chain, ChainMarket> = {
+  ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
+  BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
+  BNB: { usd: 600, usd_24h_change: 0, prices: [] }
+};
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
@@ -229,6 +249,10 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     return staticJson({ address: OWNER_WALLET_ADDRESS }) as T;
   }
 
+  if (method === "GET" && path === "/market") {
+    return staticJson({ market: FALLBACK_MARKET, source: "Local fallback", updatedAt: Date.now() }) as T;
+  }
+
   if (method === "POST" && path === "/wallet/create") {
     let address = createStaticAddress();
     while (db.users[address]) address = createStaticAddress();
@@ -335,6 +359,11 @@ function formatUsd(value: number) {
   }).format(value);
 }
 
+function formatPercent(value: number) {
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(2)}%`;
+}
+
 function formatTime(timestamp: number) {
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",
@@ -374,6 +403,31 @@ function generateRecoveryPhrase() {
   return Array.from(bytes, (byte) => RECOVERY_WORDS[byte % RECOVERY_WORDS.length]);
 }
 
+function Sparkline({ prices, positive }: { prices: number[]; positive: boolean }) {
+  if (prices.length < 2) {
+    return <div className="sparkline-empty" />;
+  }
+
+  const width = 160;
+  const height = 52;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const spread = max - min || 1;
+  const points = prices
+    .map((price, index) => {
+      const x = (index / (prices.length - 1)) * width;
+      const y = height - ((price - min) / spread) * (height - 8) - 4;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="24 hour price chart">
+      <polyline className={positive ? "sparkline-up" : "sparkline-down"} points={points} />
+    </svg>
+  );
+}
+
 function App() {
   const [wallet, setWallet] = useState<User | null>(null);
   const [pendingSetupWallet, setPendingSetupWallet] = useState<User | null>(null);
@@ -387,8 +441,11 @@ function App() {
   const [walletSecurity, setWalletSecurity] = useState<WalletSecurity | null>(null);
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
+  const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [chains, setChains] = useState<ChainInfo[]>(FALLBACK_CHAINS);
+  const [market, setMarket] = useState<Record<Chain, ChainMarket>>(FALLBACK_MARKET);
+  const [marketSource, setMarketSource] = useState("CoinGecko");
   const [ownerAddress, setOwnerAddress] = useState("");
   const [importAddress, setImportAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
@@ -401,8 +458,12 @@ function App() {
 
   const selectedBalance = wallet?.chains[selectedChain] ?? 0;
   const activeMeta = CHAIN_META[selectedChain];
+  const activeMarket = market[selectedChain] || FALLBACK_MARKET[selectedChain];
   const isOwnerWallet = wallet?.address === ownerAddress;
-  const selectedBalanceUsd = selectedBalance * activeMeta.usdRate;
+  const selectedBalanceUsd = selectedBalance * activeMarket.usd;
+  const portfolioValue = wallet
+    ? (Object.keys(wallet.chains) as Chain[]).reduce((sum, chain) => sum + wallet.chains[chain] * (market[chain]?.usd || 0), 0)
+    : 0;
 
   const selectedChainTransactions = useMemo(
     () => transactions.filter((tx) => tx.chain === selectedChain),
@@ -421,17 +482,23 @@ function App() {
     setTransactions(data.transactions);
   }, []);
 
+  const loadMarket = useCallback(async () => {
+    const data = await api<MarketResponse>("/market");
+    setMarket(data.market);
+    setMarketSource(data.source);
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!wallet) return;
     setRefreshing(true);
     try {
-      await Promise.all([loadWallet(wallet.address), loadTransactions(wallet.address)]);
+      await Promise.all([loadWallet(wallet.address), loadTransactions(wallet.address), loadMarket()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to refresh wallet.");
     } finally {
       setRefreshing(false);
     }
-  }, [loadTransactions, loadWallet, wallet]);
+  }, [loadMarket, loadTransactions, loadWallet, wallet]);
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready?.();
@@ -444,7 +511,8 @@ function App() {
     api<{ address: string }>("/owner")
       .then((data) => setOwnerAddress(data.address))
       .catch(() => undefined);
-  }, []);
+    loadMarket().catch(() => undefined);
+  }, [loadMarket]);
 
   useEffect(() => {
     const savedAddress = readSavedWalletAddress();
@@ -535,7 +603,8 @@ function App() {
       chain: override?.chain ?? sendChain,
       from: override?.from ?? wallet!.address,
       to: override?.to ?? toAddress,
-      amount: override?.amount ?? Number(amount)
+      amount: override?.amount ?? Number(amount),
+      destinationType: override ? "wallet" : sendMode
     };
 
     try {
@@ -724,17 +793,53 @@ function App() {
             </div>
 
             <div className="balance-card" style={{ "--accent": activeMeta.accent } as React.CSSProperties}>
-              <span className="eyebrow">{activeMeta.name} balance</span>
+              <div className="balance-heading">
+                <span className="eyebrow">{activeMeta.name} balance</span>
+                <span className={activeMarket.usd_24h_change >= 0 ? "market-change up" : "market-change down"}>
+                  {formatPercent(activeMarket.usd_24h_change)}
+                </span>
+              </div>
               <div className="balance-line">
                 <span>{formatNumber(selectedBalance)}</span>
                 <strong>{selectedChain}</strong>
               </div>
               <div className="usd-line">{formatUsd(selectedBalanceUsd)}</div>
-              <div className="rate-line">1 {selectedChain} = {formatUsd(activeMeta.usdRate)}</div>
+              <div className="rate-line">1 {selectedChain} = {formatUsd(activeMarket.usd)} via {marketSource}</div>
+              <Sparkline prices={activeMarket.prices} positive={activeMarket.usd_24h_change >= 0} />
               <div className="delay-row">
                 <Clock3 size={15} />
                 Confirmations complete in {activeMeta.delay}
               </div>
+            </div>
+
+            <div className="portfolio-card">
+              <div>
+                <span className="eyebrow">Portfolio value</span>
+                <strong>{formatUsd(portfolioValue)}</strong>
+              </div>
+              <TrendingUp size={20} />
+            </div>
+
+            <div className="market-grid">
+              {(Object.keys(CHAIN_META) as Chain[]).map((chain) => {
+                const chainMarket = market[chain] || FALLBACK_MARKET[chain];
+                const balance = wallet.chains[chain];
+                return (
+                  <button
+                    type="button"
+                    className={selectedChain === chain ? "market-coin active" : "market-coin"}
+                    key={chain}
+                    onClick={() => {
+                      setSelectedChain(chain);
+                      setSendChain(chain);
+                    }}
+                  >
+                    <span>{chain}</span>
+                    <strong>{formatUsd(chainMarket.usd)}</strong>
+                    <small>{formatNumber(balance)} {chain}</small>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="actions-grid">
@@ -742,6 +847,14 @@ function App() {
                 <div className="section-title">
                   <Send size={18} />
                   <h2>Send tokens</h2>
+                </div>
+                <div className="send-mode-toggle">
+                  <button className={sendMode === "wallet" ? "active" : ""} type="button" onClick={() => setSendMode("wallet")}>
+                    <Wallet size={16} /> Wallet
+                  </button>
+                  <button className={sendMode === "paypal" ? "active" : ""} type="button" onClick={() => setSendMode("paypal")}>
+                    <CreditCard size={16} /> PayPal
+                  </button>
                 </div>
                 <label>
                   Chain
@@ -752,8 +865,13 @@ function App() {
                   </select>
                 </label>
                 <label>
-                  To address
-                  <input value={toAddress} onChange={(event) => setToAddress(event.target.value)} placeholder="0x..." />
+                  {sendMode === "paypal" ? "PayPal email" : "To address"}
+                  <input
+                    value={toAddress}
+                    onChange={(event) => setToAddress(event.target.value)}
+                    type={sendMode === "paypal" ? "email" : "text"}
+                    placeholder={sendMode === "paypal" ? "name@example.com" : "0x..."}
+                  />
                 </label>
                 <label>
                   Amount

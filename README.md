@@ -18,6 +18,8 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - User wallet send attempts are declined with a contact admin message.
 - Telegram Mini App sessions restore the last opened wallet per Telegram user ID.
 - Wallets and activity history persist to a local JSON database file on the server.
+- Market prices and 24h charts are fetched through CoinGecko via the backend.
+- Send form supports wallet address or PayPal email destination mode.
 
 ## Run locally
 
