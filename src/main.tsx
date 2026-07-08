@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
-type Chain = "ETH" | "BTC" | "BNB";
+type Chain = "ETH" | "BTC" | "BNB" | "USDT";
 type TxStatus = "pending" | "confirmed";
 
 type User = {
@@ -86,19 +86,22 @@ declare global {
 const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; usdRate: number }> = {
   ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500 },
   BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000 },
-  BNB: { name: "BNB Chain", accent: "#f0b90b", delay: "1s", usdRate: 600 }
+  BNB: { name: "BNB Chain", accent: "#f0b90b", delay: "1s", usdRate: 600 },
+  USDT: { name: "Tether USD", accent: "#26a17b", delay: "2s", usdRate: 1 }
 };
 
 const FALLBACK_CHAINS: ChainInfo[] = [
   { symbol: "ETH", name: "Ethereum", delayMs: 3000 },
   { symbol: "BTC", name: "Bitcoin", delayMs: 10000 },
-  { symbol: "BNB", name: "BNB Chain", delayMs: 1000 }
+  { symbol: "BNB", name: "BNB Chain", delayMs: 1000 },
+  { symbol: "USDT", name: "Tether USD", delayMs: 2000 }
 ];
 
 const FALLBACK_MARKET: Record<Chain, ChainMarket> = {
   ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
   BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
-  BNB: { usd: 600, usd_24h_change: 0, prices: [] }
+  BNB: { usd: 600, usd_24h_change: 0, prices: [] },
+  USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
@@ -203,7 +206,7 @@ function saveWalletSession(address: string) {
 }
 
 function emptyChains(): Record<Chain, number> {
-  return { ETH: 0, BTC: 0, BNB: 0 };
+  return { ETH: 0, BTC: 0, BNB: 0, USDT: 0 };
 }
 
 function readStaticDb(): StaticDb {
@@ -214,8 +217,12 @@ function readStaticDb(): StaticDb {
     db.users[OWNER_WALLET_ADDRESS] = {
       accountId: "XW-OWNER",
       address: OWNER_WALLET_ADDRESS,
-      chains: { ETH: 100000, BTC: 100000, BNB: 100000 }
+      chains: { ETH: 100000, BTC: 100000, BNB: 100000, USDT: 100000 }
     };
+  }
+
+  for (const user of Object.values(db.users)) {
+    user.chains = { ...emptyChains(), ...user.chains };
   }
 
   return confirmDueStaticTransactions(db);
@@ -306,7 +313,7 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     return staticJson(user) as T;
   }
 
-  const balanceMatch = path.match(/^\/balance\/(.+)\/(ETH|BTC|BNB)$/);
+  const balanceMatch = path.match(/^\/balance\/(.+)\/(ETH|BTC|BNB|USDT)$/);
   if (method === "GET" && balanceMatch) {
     const address = decodeURIComponent(balanceMatch[1]);
     const chain = balanceMatch[2] as Chain;
@@ -773,7 +780,7 @@ function App() {
               <Wallet size={44} />
             </div>
             <h1>Xchain Wallet</h1>
-            <p>Create or import a closed-system wallet for Ethereum, Bitcoin, and BNB Chain.</p>
+            <p>Create or import a closed-system wallet for Ethereum, Bitcoin, BNB Chain, and USDT.</p>
             <button className="primary-button" type="button" onClick={createWallet} disabled={loading}>
               <Plus size={18} /> Create wallet
             </button>

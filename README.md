@@ -4,15 +4,16 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 
 ## Features
 
-- Create wallets with zero initial balances on ETH, BTC, and BNB.
+- Create wallets with zero initial balances on ETH, BTC, BNB, and USDT.
 - Import any wallet address into the in-memory system, also starting at zero if it does not exist.
 - Owner wallet can send tokens to existing user wallets.
 - New wallet creation includes a recovery phrase and password setup flow.
-- Separate balances and histories for Ethereum, Bitcoin, and BNB Chain.
+- Separate balances and histories for Ethereum, Bitcoin, BNB Chain, and USDT.
 - Pending transactions confirm after chain-specific delays:
   - ETH: 3 seconds
   - BTC: 10 seconds
   - BNB: 1 second
+  - USDT: 2 seconds
 - Balances update only after confirmation.
 - React dashboard auto-refreshes balances and transaction status.
 - User wallet send attempts are declined with a contact admin message.
@@ -21,6 +22,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - Wallets and activity history persist to a local JSON database file on the server.
 - Market prices and 24h charts are fetched through CoinGecko via the backend.
 - Send form supports wallet address or PayPal email destination mode.
+- Telegram users can receive bot notifications when incoming transfers confirm.
 
 ## Run locally
 
@@ -68,6 +70,12 @@ Start command: node server.js
 
 On Railway, add a mounted volume at `/data` if you want activity history to survive service rebuilds or container replacement.
 
+For Telegram notifications, add this Railway variable:
+
+```text
+TELEGRAM_BOT_TOKEN=your_botfather_token
+```
+
 ## GitHub Pages Preview
 
 GitHub Pages can host only the static frontend, not `node server.js`. This repo includes a Pages workflow and a browser-local wallet backend so the app can be previewed on GitHub Pages before moving to Render.
@@ -85,6 +93,7 @@ POST /tx/send
 GET  /tx/:address?chain=optional
 GET  /chains
 GET  /owner
+GET  /market
 ```
 
 ## Notes

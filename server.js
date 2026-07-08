@@ -15,24 +15,28 @@ const DATA_FILE = process.env.DATA_FILE || DEFAULT_DATA_FILE;
 const CHAINS = {
   ETH: { name: "Ethereum", delayMs: 3000 },
   BTC: { name: "Bitcoin", delayMs: 10000 },
-  BNB: { name: "BNB Chain", delayMs: 1000 }
+  BNB: { name: "BNB Chain", delayMs: 1000 },
+  USDT: { name: "Tether USD", delayMs: 2000 }
 };
 
 const COINGECKO_IDS = {
   ETH: "ethereum",
   BTC: "bitcoin",
-  BNB: "binancecoin"
+  BNB: "binancecoin",
+  USDT: "tether"
 };
 
 const FALLBACK_MARKET = {
   ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
   BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
-  BNB: { usd: 600, usd_24h_change: 0, prices: [] }
+  BNB: { usd: 600, usd_24h_change: 0, prices: [] },
+  USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
 
-const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0 });
+const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0, USDT: 0 });
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const DECLINED_MESSAGE = "Declined, contact admin.";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const marketCache = {
   value: null,
   updatedAt: 0
@@ -63,18 +67,25 @@ function loadDb() {
   if (!fs.existsSync(DATA_FILE)) return;
 
   const stored = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-  db.users = new Map((stored.users || []).map((user) => [user.address, createUserRecord(user.address, user.chains, user.accountId)]));
+  db.users = new Map(
+    (stored.users || []).map((user) => [
+      user.address,
+      createUserRecord(user.address, user.chains, user.accountId, user.telegramUserId)
+    ])
+  );
   db.transactions = Array.isArray(stored.transactions) ? stored.transactions : [];
 }
 
-function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId()) {
+function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId(), telegramUserId = "") {
   return {
     accountId,
+    telegramUserId,
     address,
     chains: {
       ETH: Number(balances.ETH) || 0,
       BTC: Number(balances.BTC) || 0,
-      BNB: Number(balances.BNB) || 0
+      BNB: Number(balances.BNB) || 0,
+      USDT: Number(balances.USDT) || 0
     }
   };
 }
@@ -100,6 +111,10 @@ function resolveAccountId(req, existingUser) {
   return generateAccountId();
 }
 
+function resolveTelegramUserId(req, existingUser) {
+  return existingUser?.telegramUserId || req.get("x-telegram-user-id") || "";
+}
+
 function seedOwnerWallet() {
   if (db.users.has(OWNER_WALLET_ADDRESS)) return;
 
@@ -108,7 +123,8 @@ function seedOwnerWallet() {
     createUserRecord(OWNER_WALLET_ADDRESS, {
       ETH: 100000,
       BTC: 100000,
-      BNB: 100000
+      BNB: 100000,
+      USDT: 100000
     })
   );
 }
@@ -132,6 +148,7 @@ function normalizeAddress(address) {
 function publicUser(user) {
   return {
     accountId: user.accountId,
+    telegramLinked: Boolean(user.telegramUserId),
     address: user.address,
     chains: { ...user.chains }
   };
@@ -197,7 +214,38 @@ async function getMarketData() {
   }
 }
 
-function confirmTransaction(txId) {
+async function sendTelegramNotification(user, tx) {
+  if (!TELEGRAM_BOT_TOKEN || !user.telegramUserId || tx.notifiedAt) return;
+
+  const message = [
+    `${tx.chain} received`,
+    `Amount: ${tx.amount} ${tx.chain}`,
+    `Status: confirmed`,
+    `Account: ${user.accountId}`
+  ].join("\n");
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: user.telegramUserId,
+        text: message
+      })
+    });
+
+    if (response.ok) {
+      tx.notifiedAt = Date.now();
+      saveDb();
+    } else {
+      console.warn(`Telegram notification failed: ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(`Telegram notification failed: ${error.message}`);
+  }
+}
+
+async function confirmTransaction(txId) {
   const tx = db.transactions.find((item) => item.id === txId);
   if (!tx || tx.status !== "pending") return;
 
@@ -217,11 +265,14 @@ function confirmTransaction(txId) {
   tx.status = "confirmed";
   tx.confirmedAt = Date.now();
   saveDb();
+  await sendTelegramNotification(receiver, tx);
 }
 
 function queueConfirmation(tx) {
   const remainingDelay = Math.max(0, CHAINS[tx.chain].delayMs - (Date.now() - tx.timestamp));
-  setTimeout(() => confirmTransaction(tx.id), remainingDelay);
+  setTimeout(() => {
+    confirmTransaction(tx.id).catch((error) => console.warn(error.message));
+  }, remainingDelay);
 }
 
 function queuePendingConfirmations() {
@@ -291,7 +342,7 @@ app.post("/wallet/create", (req, res) => {
   let address = generateAddress();
   while (db.users.has(address)) address = generateAddress();
 
-  const user = createUserRecord(address, ZERO_BALANCES, resolveAccountId(req));
+  const user = createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req));
   db.users.set(address, user);
   saveDb();
 
@@ -306,12 +357,14 @@ app.post("/wallet/import", (req, res) => {
   }
 
   if (!db.users.has(address)) {
-    db.users.set(address, createUserRecord(address, ZERO_BALANCES, resolveAccountId(req)));
+    db.users.set(address, createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req)));
     saveDb();
   } else {
     const user = db.users.get(address);
-    if (!user.accountId) {
+    const telegramUserId = resolveTelegramUserId(req, user);
+    if (!user.accountId || (!user.telegramUserId && telegramUserId)) {
       user.accountId = resolveAccountId(req, user);
+      user.telegramUserId = telegramUserId;
       saveDb();
     }
   }

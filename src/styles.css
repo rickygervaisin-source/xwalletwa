@@ -248,7 +248,7 @@ select:focus {
 
 .chain-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin: 18px 0;
   padding: 5px;
