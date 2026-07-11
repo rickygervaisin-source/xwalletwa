@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowRightLeft,
-  CircleCheck,
   Clock3,
   Copy,
   CreditCard,
@@ -90,11 +89,11 @@ declare global {
   }
 }
 
-const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; usdRate: number }> = {
-  ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500 },
-  BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000 },
-  BNB: { name: "BNB Chain", accent: "#f0b90b", delay: "1s", usdRate: 600 },
-  USDT: { name: "Tether USD", accent: "#26a17b", delay: "2s", usdRate: 1 }
+const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; usdRate: number; logo: string }> = {
+  ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500, logo: "E" },
+  BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000, logo: "B" },
+  BNB: { name: "BNB Chain", accent: "#f0b90b", delay: "1s", usdRate: 600, logo: "B" },
+  USDT: { name: "Tether USD", accent: "#26a17b", delay: "2s", usdRate: 1, logo: "T" }
 };
 
 const FALLBACK_CHAINS: ChainInfo[] = [
@@ -493,6 +492,14 @@ function Sparkline({ prices, positive }: { prices: number[]; positive: boolean }
   );
 }
 
+function CoinLogo({ chain, size = "md" }: { chain: Chain; size?: "sm" | "md" | "lg" }) {
+  return (
+    <span className={`coin-logo ${size}`} data-chain={chain} aria-hidden="true">
+      {CHAIN_META[chain].logo}
+    </span>
+  );
+}
+
 function App() {
   const [wallet, setWallet] = useState<User | null>(null);
   const [pendingSetupWallet, setPendingSetupWallet] = useState<User | null>(null);
@@ -863,14 +870,21 @@ function App() {
                     setSendChain(chain.symbol);
                   }}
                 >
-                  {chain.symbol}
+                  <CoinLogo chain={chain.symbol} size="sm" />
+                  <span>{chain.symbol}</span>
                 </button>
               ))}
             </div>
 
             <div className="balance-card" style={{ "--accent": activeMeta.accent } as React.CSSProperties}>
               <div className="balance-heading">
-                <span className="eyebrow">{activeMeta.name} balance</span>
+                <div className="asset-title">
+                  <CoinLogo chain={selectedChain} size="lg" />
+                  <div>
+                    <span className="eyebrow">{activeMeta.name} balance</span>
+                    <strong>{selectedChain}</strong>
+                  </div>
+                </div>
                 <span className={activeMarket.usd_24h_change >= 0 ? "market-change up" : "market-change down"}>
                   {formatPercent(activeMarket.usd_24h_change)}
                 </span>
@@ -908,9 +922,12 @@ function App() {
                     onClick={() => {
                       setSelectedChain(chain);
                       setSendChain(chain);
-                    }}
-                  >
-                    <span>{chain}</span>
+                  }}
+                >
+                    <div className="market-coin-head">
+                      <CoinLogo chain={chain} />
+                      <span>{chain}</span>
+                    </div>
                     <strong>{formatUsd(chainMarket.usd)}</strong>
                     <small>{formatNumber(balance)} {chain}</small>
                   </button>
@@ -1066,7 +1083,7 @@ function App() {
             return (
               <article className="tx-card" key={tx.id}>
                 <div className="tx-icon" data-status={tx.status}>
-                  {tx.status === "confirmed" ? <CircleCheck size={18} /> : <Clock3 size={18} />}
+                  <CoinLogo chain={tx.chain} size="sm" />
                 </div>
                 <div className="tx-main">
                   <div className="tx-topline">
