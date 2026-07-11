@@ -1228,13 +1228,6 @@ function App() {
                 <Import size={18} /> Import
               </button>
             </form>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => setImportAddress(ownerAddress || OWNER_WALLET_ADDRESS)}
-            >
-              <ShieldCheck size={18} /> Use admin wallet address
-            </button>
           </div>
         ) : (
           <>
