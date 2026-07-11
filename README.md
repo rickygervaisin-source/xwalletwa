@@ -24,6 +24,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - Send form supports wallet address or PayPal email destination mode.
 - Telegram users can receive bot notifications when incoming transfers confirm.
 - USDT transfers include network selection: ERC20, TRC20, BEP20, Polygon, Arbitrum, Optimism, Solana, and Avalanche C-Chain.
+- USDT receiving includes a receive-network selector and network-specific address display.
 
 ## Run locally
 

@@ -508,6 +508,7 @@ function App() {
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
   const [usdtNetwork, setUsdtNetwork] = useState("ERC20");
+  const [receiveUsdtNetwork, setReceiveUsdtNetwork] = useState("ERC20");
   const [usdtNetworks, setUsdtNetworks] = useState<UsdtNetwork[]>(FALLBACK_USDT_NETWORKS);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [chains, setChains] = useState<ChainInfo[]>(FALLBACK_CHAINS);
@@ -700,7 +701,7 @@ function App() {
   async function copyAddress() {
     if (!wallet) return;
     await navigator.clipboard.writeText(wallet.address);
-    setNotice("Address copied.");
+    setNotice(selectedChain === "USDT" ? `${getUsdtNetworkName(receiveUsdtNetwork)} address copied.` : "Address copied.");
   }
 
   function completeWalletSetup(event: React.FormEvent) {
@@ -974,13 +975,32 @@ function App() {
                 </div>
                 <p>Share this address with the Xchain owner. Created wallets start at zero on all chains.</p>
                 {selectedChain === "USDT" ? (
-                  <div className="network-list">
-                    {usdtNetworks.map((network) => (
-                      <span className={network.id === usdtNetwork ? "active" : ""} key={network.id}>
-                        {network.name}
-                      </span>
-                    ))}
-                  </div>
+                  <>
+                    <label>
+                      Receive network
+                      <select value={receiveUsdtNetwork} onChange={(event) => setReceiveUsdtNetwork(event.target.value)}>
+                        {usdtNetworks.map((network) => (
+                          <option key={network.id} value={network.id}>{network.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="receive-network-card">
+                      <span>{getUsdtNetworkName(receiveUsdtNetwork)}</span>
+                      <code>{wallet.address}</code>
+                    </div>
+                    <div className="network-list">
+                      {usdtNetworks.map((network) => (
+                        <button
+                          className={network.id === receiveUsdtNetwork ? "active" : ""}
+                          key={network.id}
+                          type="button"
+                          onClick={() => setReceiveUsdtNetwork(network.id)}
+                        >
+                          {network.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 ) : null}
                 <button type="button" onClick={copyAddress}>
                   <Copy size={18} /> Copy address

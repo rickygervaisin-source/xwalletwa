@@ -477,7 +477,7 @@ select:focus {
   gap: 7px;
 }
 
-.network-list span,
+.network-list button,
 .network-note {
   display: inline-flex;
   align-items: center;
@@ -490,9 +490,29 @@ select:focus {
   font-weight: 800;
 }
 
-.network-list span.active {
+.network-list button.active {
   color: #0f766e;
   background: #dff7f1;
+}
+
+.receive-network-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.receive-network-card span {
+  color: #0f766e;
+  font-weight: 850;
+}
+
+.receive-network-card code {
+  overflow-wrap: anywhere;
+  color: #475569;
+  font-size: 0.8rem;
 }
 
 .network-note {
