@@ -177,6 +177,21 @@ function seedOwnerWallet() {
   }
 }
 
+function ensureOwnerFunding(user) {
+  if (!user || user.address !== OWNER_WALLET_ADDRESS) return false;
+
+  let changed = false;
+  for (const chain of Object.keys(CHAINS)) {
+    const current = Number(user.chains[chain]) || 0;
+    if (current < OWNER_SEED_BALANCE) {
+      user.chains[chain] = OWNER_SEED_BALANCE;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function generateAddress() {
   return `0x${crypto.randomBytes(20).toString("hex")}`;
 }
@@ -526,11 +541,13 @@ app.post("/wallet/import", (req, res) => {
   } else {
     const user = db.users.get(address);
     const telegramUserId = resolveTelegramUserId(req, user);
+    let changed = ensureOwnerFunding(user);
     if (!user.accountId || (!user.telegramUserId && telegramUserId)) {
       user.accountId = resolveAccountId(req, user);
       user.telegramUserId = telegramUserId;
-      saveDb();
+      changed = true;
     }
+    if (changed) saveDb();
   }
 
   res.json(publicUser(db.users.get(address)));
@@ -544,6 +561,7 @@ app.get("/wallet/:address", (req, res) => {
     return res.status(404).json({ error: "Wallet not found." });
   }
 
+  if (ensureOwnerFunding(user)) saveDb();
   res.json(publicUser(user));
 });
 
@@ -560,6 +578,7 @@ app.get("/balance/:address/:chain", (req, res) => {
     return res.status(400).json({ error: "Unsupported chain." });
   }
 
+  if (ensureOwnerFunding(user)) saveDb();
   res.json({
     address,
     chain,
