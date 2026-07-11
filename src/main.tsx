@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QRCodeCanvas } from "qrcode.react";
 import {
   ArrowRightLeft,
   Clock3,
@@ -7,18 +8,21 @@ import {
   CreditCard,
   Eye,
   EyeOff,
+  Lock,
   Import,
   KeyRound,
   Plus,
+  QrCode,
   RefreshCw,
   Send,
   Settings,
+  ShieldCheck,
   TrendingUp,
   Wallet
 } from "lucide-react";
 import "./styles.css";
 
-type Chain = "ETH" | "BTC" | "BNB" | "USDT";
+type Chain = "ETH" | "BTC" | "BNB" | "USDT" | "USDC" | "SOL" | "XRP" | "DOGE" | "LTC" | "TRX";
 type TxStatus = "pending" | "confirmed";
 
 type User = {
@@ -39,6 +43,11 @@ type Transaction = {
   status: TxStatus;
   timestamp: number;
   confirmedAt?: number;
+};
+
+type AdminUser = User & {
+  transactionCount: number;
+  telegramLinked: boolean;
 };
 
 type NetworkOption = {
@@ -62,6 +71,7 @@ type ChainInfo = {
 type WalletSecurity = {
   recoveryPhrase: string[];
   passwordSet: boolean;
+  passwordHash?: string;
   createdAt: number;
 };
 
@@ -101,21 +111,39 @@ const CHAIN_META: Record<Chain, { name: string; accent: string; delay: string; u
   ETH: { name: "Ethereum", accent: "#627eea", delay: "3s", usdRate: 3500, logo: "E" },
   BTC: { name: "Bitcoin", accent: "#f7931a", delay: "10s", usdRate: 65000, logo: "B" },
   BNB: { name: "BNB Chain", accent: "#f0b90b", delay: "1s", usdRate: 600, logo: "B" },
-  USDT: { name: "Tether USD", accent: "#26a17b", delay: "2s", usdRate: 1, logo: "T" }
+  USDT: { name: "Tether USD", accent: "#26a17b", delay: "2s", usdRate: 1, logo: "T" },
+  USDC: { name: "USD Coin", accent: "#2775ca", delay: "2s", usdRate: 1, logo: "U" },
+  SOL: { name: "Solana", accent: "#14f195", delay: "2.5s", usdRate: 150, logo: "S" },
+  XRP: { name: "XRP Ledger", accent: "#23292f", delay: "4s", usdRate: 0.6, logo: "X" },
+  DOGE: { name: "Dogecoin", accent: "#c2a633", delay: "6s", usdRate: 0.12, logo: "D" },
+  LTC: { name: "Litecoin", accent: "#345d9d", delay: "5s", usdRate: 75, logo: "L" },
+  TRX: { name: "TRON", accent: "#ef0027", delay: "2s", usdRate: 0.12, logo: "T" }
 };
 
 const FALLBACK_CHAINS: ChainInfo[] = [
   { symbol: "ETH", name: "Ethereum", delayMs: 3000 },
   { symbol: "BTC", name: "Bitcoin", delayMs: 10000 },
   { symbol: "BNB", name: "BNB Chain", delayMs: 1000 },
-  { symbol: "USDT", name: "Tether USD", delayMs: 2000 }
+  { symbol: "USDT", name: "Tether USD", delayMs: 2000 },
+  { symbol: "USDC", name: "USD Coin", delayMs: 2000 },
+  { symbol: "SOL", name: "Solana", delayMs: 2500 },
+  { symbol: "XRP", name: "XRP Ledger", delayMs: 4000 },
+  { symbol: "DOGE", name: "Dogecoin", delayMs: 6000 },
+  { symbol: "LTC", name: "Litecoin", delayMs: 5000 },
+  { symbol: "TRX", name: "TRON", delayMs: 2000 }
 ];
 
 const FALLBACK_MARKET: Record<Chain, ChainMarket> = {
   ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
   BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
   BNB: { usd: 600, usd_24h_change: 0, prices: [] },
-  USDT: { usd: 1, usd_24h_change: 0, prices: [] }
+  USDT: { usd: 1, usd_24h_change: 0, prices: [] },
+  USDC: { usd: 1, usd_24h_change: 0, prices: [] },
+  SOL: { usd: 150, usd_24h_change: 0, prices: [] },
+  XRP: { usd: 0.6, usd_24h_change: 0, prices: [] },
+  DOGE: { usd: 0.12, usd_24h_change: 0, prices: [] },
+  LTC: { usd: 75, usd_24h_change: 0, prices: [] },
+  TRX: { usd: 0.12, usd_24h_change: 0, prices: [] }
 };
 
 const FALLBACK_NETWORKS: Record<Chain, NetworkOption[]> = {
@@ -143,14 +171,33 @@ const FALLBACK_NETWORKS: Record<Chain, NetworkOption[]> = {
     { id: "OPTIMISM", name: "Optimism" },
     { id: "SOLANA", name: "Solana" },
     { id: "AVAXC", name: "Avalanche C-Chain" }
-  ]
+  ],
+  USDC: [
+    { id: "ERC20", name: "Ethereum (ERC20)" },
+    { id: "SOLANA", name: "Solana" },
+    { id: "BASE", name: "Base" },
+    { id: "POLYGON", name: "Polygon" },
+    { id: "ARBITRUM", name: "Arbitrum One" },
+    { id: "BEP20", name: "BNB Smart Chain (BEP20)" }
+  ],
+  SOL: [{ id: "SOLANA", name: "Solana" }],
+  XRP: [{ id: "XRPL", name: "XRP Ledger" }],
+  DOGE: [{ id: "DOGE", name: "Dogecoin" }],
+  LTC: [{ id: "LTC", name: "Litecoin" }],
+  TRX: [{ id: "TRC20", name: "TRON" }]
 };
 
 const DEFAULT_NETWORK_BY_CHAIN: Record<Chain, string> = {
   ETH: "ERC20",
   BTC: "BTC",
   BNB: "BEP20",
-  USDT: "ERC20"
+  USDT: "ERC20",
+  USDC: "ERC20",
+  SOL: "SOLANA",
+  XRP: "XRPL",
+  DOGE: "DOGE",
+  LTC: "LTC",
+  TRX: "TRC20"
 };
 
 function getNetworkName(chain: Chain, networkId: string, networks = FALLBACK_NETWORKS) {
@@ -260,7 +307,7 @@ function saveWalletSession(address: string) {
 }
 
 function emptyChains(): Record<Chain, number> {
-  return { ETH: 0, BTC: 0, BNB: 0, USDT: 0 };
+  return Object.fromEntries((Object.keys(CHAIN_META) as Chain[]).map((chain) => [chain, 0])) as Record<Chain, number>;
 }
 
 function createStaticAddressForNetwork(chain: Chain, network: string) {
@@ -269,8 +316,11 @@ function createStaticAddressForNetwork(chain: Chain, network: string) {
   const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
   if (chain === "BTC") return `bc1q${hex.slice(0, 38)}`;
-  if (chain === "USDT" && network === "TRC20") return `T${hex.slice(0, 33)}`;
-  if (chain === "USDT" && network === "SOLANA") return btoa(hex).replace(/[+/=]/g, "9").slice(0, 44);
+  if (chain === "TRX" || network === "TRC20") return `T${hex.slice(0, 33)}`;
+  if (chain === "SOL" || network === "SOLANA") return btoa(hex).replace(/[+/=]/g, "9").slice(0, 44);
+  if (chain === "XRP") return `r${hex.slice(0, 33)}`;
+  if (chain === "DOGE") return `D${hex.slice(0, 33)}`;
+  if (chain === "LTC") return `ltc1q${hex.slice(0, 38)}`;
   return `0x${hex.slice(0, 40)}`;
 }
 
@@ -322,7 +372,7 @@ function readStaticDb(): StaticDb {
     db.users[OWNER_WALLET_ADDRESS] = {
       accountId: "XW-OWNER",
       address: OWNER_WALLET_ADDRESS,
-      chains: { ETH: OWNER_SEED_BALANCE, BTC: OWNER_SEED_BALANCE, BNB: OWNER_SEED_BALANCE, USDT: OWNER_SEED_BALANCE },
+      chains: Object.fromEntries((Object.keys(CHAIN_META) as Chain[]).map((chain) => [chain, OWNER_SEED_BALANCE])) as Record<Chain, number>,
       depositAddresses: emptyDepositAddresses()
     };
   }
@@ -407,9 +457,10 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     return staticJson({ networks: FALLBACK_NETWORKS }) as T;
   }
 
-  const networksMatch = path.match(/^\/networks\/(ETH|BTC|BNB|USDT)$/i);
+  const networksMatch = path.match(/^\/networks\/([A-Z]+)$/i);
   if (method === "GET" && networksMatch) {
     const chain = networksMatch[1].toUpperCase() as Chain;
+    if (!FALLBACK_NETWORKS[chain]) throw new Error("Unsupported chain.");
     return staticJson({ networks: FALLBACK_NETWORKS[chain] }) as T;
   }
 
@@ -439,12 +490,13 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     return staticJson(user) as T;
   }
 
-  const balanceMatch = path.match(/^\/balance\/(.+)\/(ETH|BTC|BNB|USDT)$/);
+  const balanceMatch = path.match(/^\/balance\/(.+)\/([A-Z]+)$/);
   if (method === "GET" && balanceMatch) {
     const address = decodeURIComponent(balanceMatch[1]);
     const chain = balanceMatch[2] as Chain;
     const user = db.users[address];
     if (!user) throw new Error("Wallet not found.");
+    if (!FALLBACK_NETWORKS[chain]) throw new Error("Unsupported chain.");
     return staticJson({ address, chain, balance: user.chains[chain] }) as T;
   }
 
@@ -557,11 +609,18 @@ function getWalletSecurity(address: string) {
   return readSecurityDb()[address] || null;
 }
 
-function saveWalletSecurity(address: string, recoveryPhrase: string[]) {
+async function hashPassword(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const hashBuffer = await window.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hashBuffer), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function saveWalletSecurity(address: string, recoveryPhrase: string[], passwordValue: string) {
   const securityDb = readSecurityDb();
   securityDb[address] = {
     recoveryPhrase,
     passwordSet: true,
+    passwordHash: await hashPassword(passwordValue),
     createdAt: Date.now()
   };
   writeSecurityDb(securityDb);
@@ -617,13 +676,17 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [settingsPhraseVisible, setSettingsPhraseVisible] = useState(false);
   const [walletSecurity, setWalletSecurity] = useState<WalletSecurity | null>(null);
+  const [walletLocked, setWalletLocked] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
+  const [amountMode, setAmountMode] = useState<"coin" | "usd">("coin");
   const [sendNetworks, setSendNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
   const [receiveNetworks, setReceiveNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
   const [networkOptions, setNetworkOptions] = useState<Record<Chain, NetworkOption[]>>(FALLBACK_NETWORKS);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [chains, setChains] = useState<ChainInfo[]>(FALLBACK_CHAINS);
   const [market, setMarket] = useState<Record<Chain, ChainMarket>>(FALLBACK_MARKET);
   const [marketSource, setMarketSource] = useState("CoinGecko");
@@ -631,6 +694,14 @@ function App() {
   const [importAddress, setImportAddress] = useState("");
   const [toAddress, setToAddress] = useState("");
   const [amount, setAmount] = useState("");
+  const [usdAmount, setUsdAmount] = useState("");
+  const [adminQuery, setAdminQuery] = useState("");
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [adminTransactions, setAdminTransactions] = useState<Transaction[]>([]);
+  const [adminFundTo, setAdminFundTo] = useState("");
+  const [adminFundAmount, setAdminFundAmount] = useState("");
+  const [adminFundUsd, setAdminFundUsd] = useState("");
+  const [adminFundChain, setAdminFundChain] = useState<Chain>("USDT");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -643,11 +714,18 @@ function App() {
   const isOwnerWallet = wallet?.address === ownerAddress;
   const selectedBalanceUsd = selectedBalance * activeMarket.usd;
   const activeSendNetworks = networkOptions[sendChain] || FALLBACK_NETWORKS[sendChain];
+  const activeAdminFundNetworks = networkOptions[adminFundChain] || FALLBACK_NETWORKS[adminFundChain];
   const activeReceiveNetworks = networkOptions[selectedChain] || FALLBACK_NETWORKS[selectedChain];
   const sendNetwork = sendNetworks[sendChain] || DEFAULT_NETWORK_BY_CHAIN[sendChain];
+  const adminFundNetwork = sendNetworks[adminFundChain] || DEFAULT_NETWORK_BY_CHAIN[adminFundChain];
   const receiveNetwork = receiveNetworks[selectedChain] || DEFAULT_NETWORK_BY_CHAIN[selectedChain];
   const receiveAddress = wallet?.depositAddresses?.[selectedChain]?.[receiveNetwork]?.address || wallet?.address || "";
   const receiveNetworkName = getNetworkName(selectedChain, receiveNetwork, networkOptions);
+  const sendRate = market[sendChain]?.usd || FALLBACK_MARKET[sendChain].usd;
+  const computedSendAmount = amountMode === "usd" ? Number(usdAmount) / sendRate : Number(amount);
+  const computedSendUsd = amountMode === "usd" ? Number(usdAmount) : Number(amount) * sendRate;
+  const adminFundRate = market[adminFundChain]?.usd || FALLBACK_MARKET[adminFundChain].usd;
+  const computedAdminFundAmount = adminFundUsd ? Number(adminFundUsd) / adminFundRate : Number(adminFundAmount);
   const portfolioValue = wallet
     ? (Object.keys(wallet.chains) as Chain[]).reduce((sum, chain) => sum + wallet.chains[chain] * (market[chain]?.usd || 0), 0)
     : 0;
@@ -718,9 +796,11 @@ function App() {
     })
       .then(async (user) => {
         setWallet(user);
-        setWalletSecurity(getWalletSecurity(user.address));
+        const security = getWalletSecurity(user.address);
+        setWalletSecurity(security);
+        setWalletLocked(Boolean(security?.passwordSet));
         await loadTransactions(user.address);
-        setNotice("Wallet session restored.");
+        setNotice(security?.passwordSet ? "Wallet session restored. Enter password to unlock." : "Wallet session restored.");
       })
       .catch(() => {
         window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
@@ -735,6 +815,12 @@ function App() {
     const timer = window.setInterval(refresh, 2500);
     return () => window.clearInterval(timer);
   }, [wallet?.address, refresh]);
+
+  useEffect(() => {
+    if (!isOwnerWallet || walletLocked) return;
+    loadAdminUsers().catch(() => undefined);
+    loadAdminTransactions().catch(() => undefined);
+  }, [isOwnerWallet, walletLocked, wallet?.address]);
 
   async function createWallet() {
     setError("");
@@ -769,11 +855,13 @@ function App() {
         method: "POST",
         body: JSON.stringify({ address: importAddress })
       });
+      const security = getWalletSecurity(user.address);
       setWallet(user);
       saveWalletSession(user.address);
-      setWalletSecurity(getWalletSecurity(user.address));
+      setWalletSecurity(security);
+      setWalletLocked(Boolean(security?.passwordSet));
       await loadTransactions(user.address);
-      setNotice("Wallet imported. Unknown addresses are created with zero balances.");
+      setNotice(security?.passwordSet ? "Wallet imported. Enter password to unlock." : "Wallet imported. Unknown addresses are created with zero balances.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to import wallet.");
     } finally {
@@ -793,7 +881,7 @@ function App() {
       chain: override?.chain ?? sendChain,
       from: override?.from ?? wallet!.address,
       to: override?.to ?? toAddress,
-      amount: override?.amount ?? Number(amount),
+      amount: override?.amount ?? computedSendAmount,
       destinationType: override ? "wallet" : sendMode,
       network: sendNetworks[override?.chain ?? sendChain] || DEFAULT_NETWORK_BY_CHAIN[override?.chain ?? sendChain]
     };
@@ -808,6 +896,7 @@ function App() {
       if (!override) {
         setToAddress("");
         setAmount("");
+        setUsdAmount("");
       }
       window.setTimeout(refresh, 500);
     } catch (err) {
@@ -823,7 +912,7 @@ function App() {
     setNotice(`${receiveNetworkName} address copied.`);
   }
 
-  function completeWalletSetup(event: React.FormEvent) {
+  async function completeWalletSetup(event: React.FormEvent) {
     event.preventDefault();
     setError("");
     setNotice("");
@@ -842,15 +931,80 @@ function App() {
       return;
     }
 
-    saveWalletSecurity(pendingSetupWallet.address, recoveryPhrase);
+    await saveWalletSecurity(pendingSetupWallet.address, recoveryPhrase, password);
     saveWalletSession(pendingSetupWallet.address);
     setWalletSecurity(getWalletSecurity(pendingSetupWallet.address));
     setWallet(pendingSetupWallet);
+    setWalletLocked(false);
     setPendingSetupWallet(null);
     setPassword("");
     setConfirmPassword("");
     setShowPassword(false);
     setNotice("Security setup complete. Wallet balances start at zero.");
+  }
+
+  async function unlockWallet(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (!walletSecurity?.passwordHash) {
+      setWalletLocked(false);
+      return;
+    }
+
+    if ((await hashPassword(unlockPassword)) !== walletSecurity.passwordHash) {
+      setError("Incorrect password.");
+      return;
+    }
+
+    setWalletLocked(false);
+    setUnlockPassword("");
+    setNotice("Wallet unlocked.");
+  }
+
+  async function loadAdminUsers(query = adminQuery) {
+    if (!isOwnerWallet || !wallet) return;
+    const data = await api<{ users: AdminUser[] }>(`/admin/users?admin=${encodeURIComponent(wallet.address)}&q=${encodeURIComponent(query)}`);
+    setAdminUsers(data.users);
+  }
+
+  async function loadAdminTransactions() {
+    if (!isOwnerWallet || !wallet) return;
+    const data = await api<{ transactions: Transaction[] }>(`/admin/transactions?admin=${encodeURIComponent(wallet.address)}`);
+    setAdminTransactions(data.transactions);
+  }
+
+  async function fundFromAdmin(event: React.FormEvent) {
+    event.preventDefault();
+    if (!wallet) return;
+
+    setError("");
+    setNotice("");
+    setLoading(true);
+
+    try {
+      const tx = await api<Transaction>("/admin/fund", {
+        method: "POST",
+        body: JSON.stringify({
+          adminAddress: wallet.address,
+          to: adminFundTo,
+          chain: adminFundChain,
+          network: adminFundNetwork,
+          amount: computedAdminFundAmount
+        })
+      });
+      setTransactions((current) => [tx, ...current]);
+      setNotice(`Admin funding sent. ${tx.chain} transaction is pending.`);
+      setAdminFundTo("");
+      setAdminFundAmount("");
+      setAdminFundUsd("");
+      await Promise.all([refresh(), loadAdminUsers(), loadAdminTransactions()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to fund user.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -862,9 +1016,14 @@ function App() {
             <span>Xchain Wallet</span>
           </div>
           {wallet ? (
-            <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh wallet">
-              <RefreshCw size={18} className={refreshing ? "spin" : ""} />
-            </button>
+            <div className="topbar-actions">
+              <button className="icon-button" type="button" onClick={() => setWalletLocked(true)} aria-label="Lock wallet">
+                <Lock size={18} />
+              </button>
+              <button className="icon-button" type="button" onClick={refresh} aria-label="Refresh wallet">
+                <RefreshCw size={18} className={refreshing ? "spin" : ""} />
+              </button>
+            </div>
           ) : null}
         </div>
 
@@ -927,6 +1086,28 @@ function App() {
               </button>
               <button className="primary-button" type="submit" disabled={loading}>
                 <Wallet size={18} /> Open wallet
+              </button>
+            </form>
+          </div>
+        ) : wallet && walletLocked ? (
+          <div className="setup-panel lock-panel">
+            <div className="section-title">
+              <ShieldCheck size={18} />
+              <h2>Wallet locked</h2>
+            </div>
+            <p className="setup-copy">Enter your wallet password to continue.</p>
+            <form className="setup-form" onSubmit={unlockWallet}>
+              <label>
+                Password
+                <input
+                  value={unlockPassword}
+                  onChange={(event) => setUnlockPassword(event.target.value)}
+                  type="password"
+                  placeholder="Wallet password"
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={!unlockPassword}>
+                <Lock size={18} /> Unlock
               </button>
             </form>
           </div>
@@ -1098,13 +1279,113 @@ function App() {
                   />
                 </label>
                 <label>
-                  Amount
-                  <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="0.00" />
+                  Amount type
+                  <div className="send-mode-toggle compact-toggle">
+                    <button className={amountMode === "coin" ? "active" : ""} type="button" onClick={() => setAmountMode("coin")}>
+                      {sendChain}
+                    </button>
+                    <button className={amountMode === "usd" ? "active" : ""} type="button" onClick={() => setAmountMode("usd")}>
+                      USD
+                    </button>
+                  </div>
                 </label>
-                <button className="primary-button" type="submit" disabled={loading || !toAddress || !amount}>
+                {amountMode === "usd" ? (
+                  <label>
+                    USD amount
+                    <input value={usdAmount} onChange={(event) => setUsdAmount(event.target.value)} inputMode="decimal" placeholder="$0.00" />
+                    <span className="conversion-note">≈ {formatNumber(computedSendAmount || 0)} {sendChain}</span>
+                  </label>
+                ) : (
+                  <label>
+                    Coin amount
+                    <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="0.00" />
+                    <span className="conversion-note">≈ {formatUsd(computedSendUsd || 0)}</span>
+                  </label>
+                )}
+                <div className="conversion-note">Rate: 1 {sendChain} = {formatUsd(sendRate)}</div>
+                <button className="primary-button" type="submit" disabled={loading || !toAddress || !computedSendAmount}>
                   <ArrowRightLeft size={18} /> Send
                 </button>
               </form>
+
+              {isOwnerWallet ? (
+                <form className="admin-card" onSubmit={fundFromAdmin}>
+                  <div className="section-title">
+                    <ShieldCheck size={18} />
+                    <h2>Admin</h2>
+                  </div>
+                  <label>
+                    Find user
+                    <div className="inline-field">
+                      <input
+                        value={adminQuery}
+                        onChange={(event) => setAdminQuery(event.target.value)}
+                        placeholder="Account ID or address"
+                      />
+                      <button type="button" onClick={() => loadAdminUsers()}>
+                        Search
+                      </button>
+                    </div>
+                  </label>
+                  <label>
+                    Fund account/address
+                    <input value={adminFundTo} onChange={(event) => setAdminFundTo(event.target.value)} placeholder="XW-... or receive address" />
+                  </label>
+                  <label>
+                    Asset
+                    <select value={adminFundChain} onChange={(event) => setAdminFundChain(event.target.value as Chain)}>
+                      {chains.map((chain) => (
+                        <option key={chain.symbol} value={chain.symbol}>{chain.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Network
+                    <select
+                      value={adminFundNetwork}
+                      onChange={(event) => setSendNetworks((current) => ({ ...current, [adminFundChain]: event.target.value }))}
+                    >
+                      {activeAdminFundNetworks.map((network) => (
+                        <option key={network.id} value={network.id}>{network.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="two-col">
+                    <label>
+                      Coin
+                      <input value={adminFundAmount} onChange={(event) => setAdminFundAmount(event.target.value)} inputMode="decimal" placeholder="0.00" />
+                    </label>
+                    <label>
+                      USD
+                      <input value={adminFundUsd} onChange={(event) => setAdminFundUsd(event.target.value)} inputMode="decimal" placeholder="$0.00" />
+                    </label>
+                  </div>
+                  <span className="conversion-note">Sending {formatNumber(computedAdminFundAmount || 0)} {adminFundChain}</span>
+                  <button className="primary-button" type="submit" disabled={loading || !adminFundTo || !computedAdminFundAmount}>
+                    <Send size={18} /> Fund user
+                  </button>
+                  <div className="admin-list">
+                    {adminUsers.slice(0, 5).map((user) => (
+                      <button
+                        type="button"
+                        key={user.address}
+                        onClick={() => setAdminFundTo(user.accountId)}
+                      >
+                        <span>{user.accountId}</span>
+                        <small>{shortAddress(user.address)} · {user.transactionCount} tx</small>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mini-tx-list">
+                    {adminTransactions.slice(0, 4).map((tx) => (
+                      <button type="button" key={tx.id} onClick={() => setSelectedTx(tx)}>
+                        <span>{tx.chain} · {tx.status}</span>
+                        <small>{formatNumber(tx.amount)} to {shortAddress(tx.to)}</small>
+                      </button>
+                    ))}
+                  </div>
+                </form>
+              ) : null}
 
               <div className="receive-card">
                 <div className="section-title">
@@ -1125,6 +1406,9 @@ function App() {
                 </label>
                 <div className="receive-network-card">
                   <span>{receiveNetworkName}</span>
+                  <div className="qr-box">
+                    <QRCodeCanvas value={receiveAddress} size={132} bgColor="#ffffff" fgColor="#172033" includeMargin />
+                  </div>
                   <code>{receiveAddress}</code>
                 </div>
                 <div className="network-list">
@@ -1201,7 +1485,7 @@ function App() {
           {wallet && selectedChainTransactions.length ? selectedChainTransactions.map((tx) => {
             const incoming = tx.to === wallet.address;
             return (
-              <article className="tx-card" key={tx.id}>
+              <article className="tx-card" key={tx.id} role="button" tabIndex={0} onClick={() => setSelectedTx(tx)} onKeyDown={(event) => event.key === "Enter" && setSelectedTx(tx)}>
                 <div className="tx-icon" data-status={tx.status}>
                   <CoinLogo chain={tx.chain} size="sm" />
                 </div>
@@ -1225,6 +1509,29 @@ function App() {
             </div>
           )}
         </div>
+
+        {selectedTx ? (
+          <div className="tx-detail">
+            <div className="history-header">
+              <div>
+                <span className="eyebrow">Transaction details</span>
+                <h2>{selectedTx.chain} transfer</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSelectedTx(null)} aria-label="Close details">×</button>
+            </div>
+            <div className="detail-grid">
+              <span>Status</span><strong className={`status ${selectedTx.status}`}>{selectedTx.status}</strong>
+              <span>Amount</span><strong>{formatNumber(selectedTx.amount)} {selectedTx.chain}</strong>
+              <span>USD value</span><strong>{formatUsd(selectedTx.amount * (market[selectedTx.chain]?.usd || 0))}</strong>
+              <span>Network</span><strong>{selectedTx.networkLabel || CHAIN_META[selectedTx.chain].name}</strong>
+              <span>Transaction ID</span><code>{selectedTx.id}</code>
+              <span>From</span><code>{selectedTx.from}</code>
+              <span>To</span><code>{selectedTx.to}</code>
+              <span>Created</span><strong>{formatTime(selectedTx.timestamp)}</strong>
+              {selectedTx.confirmedAt ? <><span>Confirmed</span><strong>{formatTime(selectedTx.confirmedAt)}</strong></> : null}
+            </div>
+          </div>
+        ) : null}
       </section>
     </main>
   );

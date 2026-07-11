@@ -93,6 +93,12 @@ button:disabled {
   color: #121826;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .brand-icon,
 .tx-icon,
 .orbital-wallet {
@@ -152,6 +158,31 @@ button:disabled {
 
 .coin-logo[data-chain="USDT"] {
   background: linear-gradient(145deg, #45d6a3, #168f6d);
+}
+
+.coin-logo[data-chain="USDC"] {
+  background: linear-gradient(145deg, #5aa7ff, #2775ca);
+}
+
+.coin-logo[data-chain="SOL"] {
+  background: linear-gradient(145deg, #14f195, #9945ff);
+}
+
+.coin-logo[data-chain="XRP"] {
+  background: linear-gradient(145deg, #59636e, #111827);
+}
+
+.coin-logo[data-chain="DOGE"] {
+  color: #172033;
+  background: linear-gradient(145deg, #f7e19a, #c2a633);
+}
+
+.coin-logo[data-chain="LTC"] {
+  background: linear-gradient(145deg, #8aa8d8, #345d9d);
+}
+
+.coin-logo[data-chain="TRX"] {
+  background: linear-gradient(145deg, #ff647c, #ef0027);
 }
 
 .icon-button {
@@ -299,7 +330,7 @@ select:focus {
 
 .chain-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 18px 0;
   padding: 5px;
@@ -513,11 +544,18 @@ select:focus {
 
 .send-card,
 .receive-card,
-.settings-card {
+.settings-card,
+.admin-card {
   display: grid;
   gap: 14px;
   padding: 16px;
   background: #ffffff;
+}
+
+.admin-card {
+  border-radius: 8px;
+  border: 1px solid #b9d8d2;
+  background: #f7fffd;
 }
 
 .send-mode-toggle {
@@ -540,6 +578,67 @@ select:focus {
   color: #0f172a;
   background: #ffffff;
   box-shadow: 0 6px 18px rgba(42, 53, 79, 0.1);
+}
+
+.compact-toggle {
+  grid-template-columns: 1fr 1fr;
+}
+
+.conversion-note {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 760;
+}
+
+.inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.inline-field button,
+.admin-list button,
+.mini-tx-list button {
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: #172033;
+  background: #e8eef6;
+  font-weight: 760;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.admin-list,
+.mini-tx-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-list button,
+.mini-tx-list button {
+  display: grid;
+  gap: 3px;
+  height: auto;
+  padding: 10px 12px;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #d7deea;
+}
+
+.admin-list span,
+.mini-tx-list span {
+  font-weight: 850;
+}
+
+.admin-list small,
+.mini-tx-list small {
+  color: #64748b;
+  overflow-wrap: anywhere;
 }
 
 .owner-note {
@@ -582,6 +681,15 @@ select:focus {
   background: #f8fafc;
 }
 
+.qr-box {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+
 .receive-network-card span {
   color: #0f766e;
   font-weight: 850;
@@ -621,6 +729,11 @@ label {
   display: grid;
   gap: 16px;
   margin-top: 24px;
+}
+
+.lock-panel {
+  min-height: 320px;
+  align-content: center;
 }
 
 .setup-copy {
@@ -791,6 +904,7 @@ label {
   border: 1px solid #d7deea;
   border-radius: 8px;
   background: #ffffff;
+  cursor: pointer;
 }
 
 .tx-icon {
@@ -848,6 +962,35 @@ label {
 
 .route span {
   color: #94a3b8;
+}
+
+.tx-detail {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #d7deea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+  align-items: start;
+}
+
+.detail-grid span {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.detail-grid strong,
+.detail-grid code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #172033;
 }
 
 time,

@@ -16,21 +16,39 @@ const CHAINS = {
   ETH: { name: "Ethereum", delayMs: 3000 },
   BTC: { name: "Bitcoin", delayMs: 10000 },
   BNB: { name: "BNB Chain", delayMs: 1000 },
-  USDT: { name: "Tether USD", delayMs: 2000 }
+  USDT: { name: "Tether USD", delayMs: 2000 },
+  USDC: { name: "USD Coin", delayMs: 2000 },
+  SOL: { name: "Solana", delayMs: 2500 },
+  XRP: { name: "XRP Ledger", delayMs: 4000 },
+  DOGE: { name: "Dogecoin", delayMs: 6000 },
+  LTC: { name: "Litecoin", delayMs: 5000 },
+  TRX: { name: "TRON", delayMs: 2000 }
 };
 
 const COINGECKO_IDS = {
   ETH: "ethereum",
   BTC: "bitcoin",
   BNB: "binancecoin",
-  USDT: "tether"
+  USDT: "tether",
+  USDC: "usd-coin",
+  SOL: "solana",
+  XRP: "ripple",
+  DOGE: "dogecoin",
+  LTC: "litecoin",
+  TRX: "tron"
 };
 
 const FALLBACK_MARKET = {
   ETH: { usd: 3500, usd_24h_change: 0, prices: [] },
   BTC: { usd: 65000, usd_24h_change: 0, prices: [] },
   BNB: { usd: 600, usd_24h_change: 0, prices: [] },
-  USDT: { usd: 1, usd_24h_change: 0, prices: [] }
+  USDT: { usd: 1, usd_24h_change: 0, prices: [] },
+  USDC: { usd: 1, usd_24h_change: 0, prices: [] },
+  SOL: { usd: 150, usd_24h_change: 0, prices: [] },
+  XRP: { usd: 0.6, usd_24h_change: 0, prices: [] },
+  DOGE: { usd: 0.12, usd_24h_change: 0, prices: [] },
+  LTC: { usd: 75, usd_24h_change: 0, prices: [] },
+  TRX: { usd: 0.12, usd_24h_change: 0, prices: [] }
 };
 
 const NETWORKS = {
@@ -60,6 +78,29 @@ const NETWORKS = {
     OPTIMISM: "Optimism",
     SOLANA: "Solana",
     AVAXC: "Avalanche C-Chain"
+  },
+  USDC: {
+    ERC20: "Ethereum (ERC20)",
+    SOLANA: "Solana",
+    BASE: "Base",
+    POLYGON: "Polygon",
+    ARBITRUM: "Arbitrum One",
+    BEP20: "BNB Smart Chain (BEP20)"
+  },
+  SOL: {
+    SOLANA: "Solana"
+  },
+  XRP: {
+    XRPL: "XRP Ledger"
+  },
+  DOGE: {
+    DOGE: "Dogecoin"
+  },
+  LTC: {
+    LTC: "Litecoin"
+  },
+  TRX: {
+    TRC20: "TRON"
   }
 };
 
@@ -67,10 +108,16 @@ const DEFAULT_NETWORKS = {
   ETH: "ERC20",
   BTC: "BTC",
   BNB: "BEP20",
-  USDT: "ERC20"
+  USDT: "ERC20",
+  USDC: "ERC20",
+  SOL: "SOLANA",
+  XRP: "XRPL",
+  DOGE: "DOGE",
+  LTC: "LTC",
+  TRX: "TRC20"
 };
 
-const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0, USDT: 0 });
+const ZERO_BALANCES = Object.freeze(Object.fromEntries(Object.keys(CHAINS).map((chain) => [chain, 0])));
 const OWNER_WALLET_ADDRESS = "0x8f4e6a6d4c9e7b2f13c0a8b7d5e2f9a1c6b3d4e5";
 const LEGACY_OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const OWNER_SEED_BALANCE = 1000000000;
@@ -120,12 +167,7 @@ function createUserRecord(address, balances = ZERO_BALANCES, accountId = generat
     accountId,
     telegramUserId,
     address,
-    chains: {
-      ETH: Number(balances.ETH) || 0,
-      BTC: Number(balances.BTC) || 0,
-      BNB: Number(balances.BNB) || 0,
-      USDT: Number(balances.USDT) || 0
-    },
+    chains: Object.fromEntries(Object.keys(CHAINS).map((chain) => [chain, Number(balances[chain]) || 0])),
     depositAddresses: depositAddresses || {}
   };
 
@@ -164,10 +206,7 @@ function seedOwnerWallet() {
 
   if (!owner) {
     owner = createUserRecord(OWNER_WALLET_ADDRESS, {
-      ETH: legacyOwner?.chains?.ETH || 0,
-      BTC: legacyOwner?.chains?.BTC || 0,
-      BNB: legacyOwner?.chains?.BNB || 0,
-      USDT: legacyOwner?.chains?.USDT || 0
+      ...legacyOwner?.chains
     }, "XW-OWNER");
     db.users.set(OWNER_WALLET_ADDRESS, owner);
   }
@@ -197,19 +236,31 @@ function generateAddress() {
 }
 
 function generateDepositAddress(chain, network) {
-  const evmNetworks = new Set(["ETH", "BNB", "USDT:ERC20", "USDT:BEP20", "USDT:POLYGON", "USDT:ARBITRUM", "USDT:OPTIMISM", "USDT:AVAXC", "ETH:ERC20", "ETH:ARBITRUM", "ETH:OPTIMISM", "ETH:BASE", "ETH:POLYGON", "ETH:AVAXC", "ETH:BEP20", "BNB:BEP20", "BNB:OPBNB", "BNB:ERC20"]);
+  const evmNetworks = new Set(["ETH", "BNB", "USDT:ERC20", "USDT:BEP20", "USDT:POLYGON", "USDT:ARBITRUM", "USDT:OPTIMISM", "USDT:AVAXC", "USDC:ERC20", "USDC:BASE", "USDC:POLYGON", "USDC:ARBITRUM", "USDC:BEP20", "ETH:ERC20", "ETH:ARBITRUM", "ETH:OPTIMISM", "ETH:BASE", "ETH:POLYGON", "ETH:AVAXC", "ETH:BEP20", "BNB:BEP20", "BNB:OPBNB", "BNB:ERC20"]);
   const key = `${chain}:${network}`;
 
   if (chain === "BTC") {
     return `bc1q${crypto.randomBytes(20).toString("hex").slice(0, 38)}`;
   }
 
-  if (chain === "USDT" && network === "TRC20") {
+  if (chain === "TRX" || network === "TRC20") {
     return `T${crypto.randomBytes(20).toString("hex").slice(0, 33)}`;
   }
 
-  if (chain === "USDT" && network === "SOLANA") {
+  if (chain === "SOL" || network === "SOLANA") {
     return crypto.randomBytes(32).toString("base64url").replace(/[-_]/g, "9").slice(0, 44);
+  }
+
+  if (chain === "XRP") {
+    return `r${crypto.randomBytes(20).toString("hex").slice(0, 33)}`;
+  }
+
+  if (chain === "DOGE") {
+    return `D${crypto.randomBytes(20).toString("hex").slice(0, 33)}`;
+  }
+
+  if (chain === "LTC") {
+    return `ltc1q${crypto.randomBytes(20).toString("hex").slice(0, 38)}`;
   }
 
   if (evmNetworks.has(chain) || evmNetworks.has(key)) {
@@ -268,6 +319,13 @@ function findUserByAnyAddress(address) {
     return { user, canonicalAddress: user.address };
   }
 
+  const normalizedLookup = String(address || "").trim().toLowerCase();
+  for (const user of db.users.values()) {
+    if (String(user.accountId || "").toLowerCase() === normalizedLookup) {
+      return { user, canonicalAddress: user.address };
+    }
+  }
+
   for (const user of db.users.values()) {
     ensureDepositAddresses(user);
     for (const [chain, networks] of Object.entries(user.depositAddresses)) {
@@ -285,6 +343,27 @@ function findUserByAnyAddress(address) {
   }
 
   return null;
+}
+
+function requireOwner(req, res) {
+  const adminAddress = normalizeAddress(req.get("x-admin-address") || req.query.admin || req.body?.adminAddress);
+  if (!isOwnerAddress(adminAddress)) {
+    res.status(403).json({ error: DECLINED_MESSAGE });
+    return false;
+  }
+  return true;
+}
+
+function adminUserSummary(user) {
+  ensureDepositAddresses(user);
+  return {
+    accountId: user.accountId,
+    address: user.address,
+    telegramLinked: Boolean(user.telegramUserId),
+    chains: { ...user.chains },
+    depositAddresses: structuredClone(user.depositAddresses),
+    transactionCount: db.transactions.filter((tx) => tx.from === user.address || tx.to === user.address).length
+  };
 }
 
 function networksPayload(chain) {
@@ -517,6 +596,84 @@ app.get("/market", async (_req, res) => {
   });
 });
 
+app.get("/admin/users", (req, res) => {
+  if (!requireOwner(req, res)) return;
+
+  const query = String(req.query.q || "").trim().toLowerCase();
+  const users = Array.from(db.users.values())
+    .filter((user) => user.address !== OWNER_WALLET_ADDRESS)
+    .filter((user) => {
+      if (!query) return true;
+      return user.address.toLowerCase().includes(query) || String(user.accountId || "").toLowerCase().includes(query);
+    })
+    .slice(0, 50)
+    .map(adminUserSummary);
+
+  res.json({ users });
+});
+
+app.get("/admin/transactions", (req, res) => {
+  if (!requireOwner(req, res)) return;
+
+  const chain = req.query.chain;
+  if (chain && !isSupportedChain(chain)) {
+    return res.status(400).json({ error: "Unsupported chain." });
+  }
+
+  const transactions = db.transactions
+    .filter((tx) => !chain || tx.chain === chain)
+    .slice(0, 100)
+    .map(publicTransaction);
+
+  res.json({ transactions });
+});
+
+app.post("/admin/fund", (req, res) => {
+  if (!requireOwner(req, res)) return;
+
+  const chain = req.body?.chain;
+  const recipient = normalizeAddress(req.body?.to);
+  const amount = parsePositiveAmount(req.body?.amount);
+  let network = resolveTransferNetwork(chain, req.body?.network);
+
+  if (!isSupportedChain(chain)) {
+    return res.status(400).json({ error: "Unsupported chain." });
+  }
+
+  if (!network) {
+    return res.status(400).json({ error: "Unsupported network." });
+  }
+
+  if (!amount) {
+    return res.status(400).json({ error: "Amount must be greater than zero." });
+  }
+
+  const receiverMatch = findUserByAnyAddress(recipient);
+  if (!receiverMatch) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  if (receiverMatch.depositChain && receiverMatch.depositChain !== chain) {
+    return res.status(400).json({ error: `Address belongs to ${receiverMatch.depositChain}. Select the matching asset.` });
+  }
+
+  if (receiverMatch.depositNetwork) {
+    network = receiverMatch.depositNetwork;
+  }
+
+  const owner = db.users.get(OWNER_WALLET_ADDRESS);
+  ensureOwnerFunding(owner);
+  const tx = createPendingTransaction({
+    chain,
+    from: OWNER_WALLET_ADDRESS,
+    to: receiverMatch.canonicalAddress,
+    amount,
+    network
+  });
+
+  res.status(201).json(publicTransaction(tx));
+});
+
 app.post("/wallet/create", (req, res) => {
   let address = generateAddress();
   while (db.users.has(address)) address = generateAddress();
@@ -673,7 +830,7 @@ app.get("/tx/:address", (req, res) => {
 });
 
 app.use((req, res, next) => {
-  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner", "/market", "/networks"];
+  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner", "/market", "/networks", "/admin"];
   if (apiPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     return res.status(404).json({ error: "Route not found." });
   }
