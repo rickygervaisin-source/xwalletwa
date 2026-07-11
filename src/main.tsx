@@ -869,6 +869,22 @@ function App() {
     }
   }
 
+  function switchWallet() {
+    window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
+    setWallet(null);
+    setPendingSetupWallet(null);
+    setWalletSecurity(null);
+    setWalletLocked(false);
+    setUnlockPassword("");
+    setTransactions([]);
+    setSelectedTx(null);
+    setAdminUsers([]);
+    setAdminTransactions([]);
+    setImportAddress("");
+    setNotice("Current session cleared. Import the wallet address you want to open.");
+    setError("");
+  }
+
   async function sendTransaction(event?: React.FormEvent, override?: Partial<{ from: string; to: string; amount: number; chain: Chain }>) {
     event?.preventDefault();
     if (!wallet && !override?.from) return;
@@ -1109,6 +1125,9 @@ function App() {
               <button className="primary-button" type="submit" disabled={!unlockPassword}>
                 <Lock size={18} /> Unlock
               </button>
+              <button className="secondary-button" type="button" onClick={switchWallet}>
+                <Import size={18} /> Import another wallet
+              </button>
             </form>
           </div>
         ) : !wallet ? (
@@ -1132,6 +1151,13 @@ function App() {
                 <Import size={18} /> Import
               </button>
             </form>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => setImportAddress(ownerAddress || OWNER_WALLET_ADDRESS)}
+            >
+              <ShieldCheck size={18} /> Use admin wallet address
+            </button>
           </div>
         ) : (
           <>
@@ -1456,6 +1482,9 @@ function App() {
                     ))}
                   </div>
                 ) : null}
+                <button className="secondary-button" type="button" onClick={switchWallet}>
+                  <Import size={18} /> Import another wallet
+                </button>
               </div>
             </div>
           </>
