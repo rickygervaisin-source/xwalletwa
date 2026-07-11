@@ -31,12 +31,19 @@ type User = {
 type Transaction = {
   id: string;
   chain: Chain;
+  network?: string;
+  networkLabel?: string;
   from: string;
   to: string;
   amount: number;
   status: TxStatus;
   timestamp: number;
   confirmedAt?: number;
+};
+
+type UsdtNetwork = {
+  id: string;
+  name: string;
 };
 
 type ChainInfo = {
@@ -103,6 +110,21 @@ const FALLBACK_MARKET: Record<Chain, ChainMarket> = {
   BNB: { usd: 600, usd_24h_change: 0, prices: [] },
   USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
+
+const FALLBACK_USDT_NETWORKS: UsdtNetwork[] = [
+  { id: "ERC20", name: "Ethereum (ERC20)" },
+  { id: "TRC20", name: "TRON (TRC20)" },
+  { id: "BEP20", name: "BNB Smart Chain (BEP20)" },
+  { id: "POLYGON", name: "Polygon" },
+  { id: "ARBITRUM", name: "Arbitrum One" },
+  { id: "OPTIMISM", name: "Optimism" },
+  { id: "SOLANA", name: "Solana" },
+  { id: "AVAXC", name: "Avalanche C-Chain" }
+];
+
+function getUsdtNetworkName(networkId: string) {
+  return FALLBACK_USDT_NETWORKS.find((network) => network.id === networkId)?.name || "Ethereum (ERC20)";
+}
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
@@ -288,6 +310,10 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     return staticJson({ market: FALLBACK_MARKET, source: "Local fallback", updatedAt: Date.now() }) as T;
   }
 
+  if (method === "GET" && path === "/networks/usdt") {
+    return staticJson({ networks: FALLBACK_USDT_NETWORKS }) as T;
+  }
+
   if (method === "POST" && path === "/wallet/create") {
     let address = createStaticAddress();
     while (db.users[address]) address = createStaticAddress();
@@ -327,8 +353,10 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     const from = String(body.from || "").trim();
     const to = String(body.to || "").trim();
     const amount = Math.round(Number(body.amount) * 100000000) / 100000000;
+    const network = chain === "USDT" ? String(body.network || "ERC20").toUpperCase() : chain;
 
     if (!FALLBACK_CHAINS.some((item) => item.symbol === chain)) throw new Error("Unsupported chain.");
+    if (chain === "USDT" && !FALLBACK_USDT_NETWORKS.some((item) => item.id === network)) throw new Error("Unsupported USDT network.");
     if (!from || !db.users[from]) throw new Error(DECLINED_MESSAGE);
     if (!to || !db.users[to]) throw new Error(DECLINED_MESSAGE);
     if (from !== OWNER_WALLET_ADDRESS) throw new Error(DECLINED_MESSAGE);
@@ -345,6 +373,8 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     const tx: Transaction = {
       id: `tx_${window.crypto.randomUUID()}`,
       chain,
+      network,
+      networkLabel: chain === "USDT" ? getUsdtNetworkName(network) : CHAIN_META[chain].name,
       from,
       to,
       amount,
@@ -477,6 +507,8 @@ function App() {
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
+  const [usdtNetwork, setUsdtNetwork] = useState("ERC20");
+  const [usdtNetworks, setUsdtNetworks] = useState<UsdtNetwork[]>(FALLBACK_USDT_NETWORKS);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [chains, setChains] = useState<ChainInfo[]>(FALLBACK_CHAINS);
   const [market, setMarket] = useState<Record<Chain, ChainMarket>>(FALLBACK_MARKET);
@@ -545,6 +577,9 @@ function App() {
       .catch(() => undefined);
     api<{ address: string }>("/owner")
       .then((data) => setOwnerAddress(data.address))
+      .catch(() => undefined);
+    api<{ networks: UsdtNetwork[] }>("/networks/usdt")
+      .then((data) => setUsdtNetworks(data.networks))
       .catch(() => undefined);
     loadMarket().catch(() => undefined);
   }, [loadMarket]);
@@ -639,7 +674,8 @@ function App() {
       from: override?.from ?? wallet!.address,
       to: override?.to ?? toAddress,
       amount: override?.amount ?? Number(amount),
-      destinationType: override ? "wallet" : sendMode
+      destinationType: override ? "wallet" : sendMode,
+      network: (override?.chain ?? sendChain) === "USDT" ? usdtNetwork : undefined
     };
 
     try {
@@ -903,6 +939,16 @@ function App() {
                     ))}
                   </select>
                 </label>
+                {sendChain === "USDT" ? (
+                  <label>
+                    USDT network
+                    <select value={usdtNetwork} onChange={(event) => setUsdtNetwork(event.target.value)}>
+                      {usdtNetworks.map((network) => (
+                        <option key={network.id} value={network.id}>{network.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <label>
                   {sendMode === "paypal" ? "PayPal email" : "To address"}
                   <input
@@ -927,6 +973,15 @@ function App() {
                   <h2>Receive</h2>
                 </div>
                 <p>Share this address with the Xchain owner. Created wallets start at zero on all chains.</p>
+                {selectedChain === "USDT" ? (
+                  <div className="network-list">
+                    {usdtNetworks.map((network) => (
+                      <span className={network.id === usdtNetwork ? "active" : ""} key={network.id}>
+                        {network.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <button type="button" onClick={copyAddress}>
                   <Copy size={18} /> Copy address
                 </button>
@@ -998,6 +1053,7 @@ function App() {
                     <strong>{incoming ? "Received" : "Sent"} {formatNumber(tx.amount)} {tx.chain}</strong>
                     <span className={`status ${tx.status}`}>{tx.status}</span>
                   </div>
+                  {tx.networkLabel ? <div className="network-note">{tx.networkLabel}</div> : null}
                   <div className="route">
                     {shortAddress(tx.from)} <span>to</span> {shortAddress(tx.to)}
                   </div>

@@ -471,6 +471,36 @@ select:focus {
   background: #ecfdf5;
 }
 
+.network-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.network-list span,
+.network-note {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  color: #475569;
+  background: #eef3f8;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.network-list span.active {
+  color: #0f766e;
+  background: #dff7f1;
+}
+
+.network-note {
+  margin-top: 7px;
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
 .section-title {
   justify-content: flex-start;
   gap: 9px;

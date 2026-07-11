@@ -33,6 +33,17 @@ const FALLBACK_MARKET = {
   USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
 
+const USDT_NETWORKS = {
+  ERC20: "Ethereum (ERC20)",
+  TRC20: "TRON (TRC20)",
+  BEP20: "BNB Smart Chain (BEP20)",
+  POLYGON: "Polygon",
+  ARBITRUM: "Arbitrum One",
+  OPTIMISM: "Optimism",
+  SOLANA: "Solana",
+  AVAXC: "Avalanche C-Chain"
+};
+
 const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0, USDT: 0 });
 const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
 const DECLINED_MESSAGE = "Declined, contact admin.";
@@ -158,6 +169,13 @@ function publicTransaction(tx) {
   return { ...tx };
 }
 
+function resolveTransferNetwork(chain, requestedNetwork) {
+  if (chain !== "USDT") return chain;
+
+  const network = String(requestedNetwork || "ERC20").toUpperCase();
+  return Object.prototype.hasOwnProperty.call(USDT_NETWORKS, network) ? network : "";
+}
+
 function parsePositiveAmount(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -218,7 +236,7 @@ async function sendTelegramNotification(user, tx) {
   if (!TELEGRAM_BOT_TOKEN || !user.telegramUserId || tx.notifiedAt) return;
 
   const message = [
-    `${tx.chain} received`,
+    `${tx.chain} received${tx.networkLabel ? ` on ${tx.networkLabel}` : ""}`,
     `Amount: ${tx.amount} ${tx.chain}`,
     `Status: confirmed`,
     `Account: ${user.accountId}`
@@ -289,10 +307,12 @@ function getPendingOutgoingTotal(address, chain) {
     .reduce((sum, tx) => sum + tx.amount, 0);
 }
 
-function createPendingTransaction({ chain, from, to, amount }) {
+function createPendingTransaction({ chain, from, to, amount, network }) {
   const tx = {
     id: generateTransactionId(),
     chain,
+    network,
+    networkLabel: chain === "USDT" ? USDT_NETWORKS[network] : CHAINS[chain].name,
     from,
     to,
     amount,
@@ -321,6 +341,12 @@ app.get("/chains", (_req, res) => {
       name: config.name,
       delayMs: config.delayMs
     }))
+  });
+});
+
+app.get("/networks/usdt", (_req, res) => {
+  res.json({
+    networks: Object.entries(USDT_NETWORKS).map(([id, name]) => ({ id, name }))
   });
 });
 
@@ -409,9 +435,14 @@ app.post("/tx/send", (req, res) => {
   const to = normalizeAddress(req.body?.to);
   const amount = parsePositiveAmount(req.body?.amount);
   const destinationType = req.body?.destinationType === "paypal" ? "paypal" : "wallet";
+  const network = resolveTransferNetwork(chain, req.body?.network);
 
   if (!isSupportedChain(chain)) {
     return res.status(400).json({ error: "Unsupported chain." });
+  }
+
+  if (!network) {
+    return res.status(400).json({ error: "Unsupported USDT network." });
   }
 
   if (!from || !db.users.has(from)) {
@@ -449,7 +480,7 @@ app.post("/tx/send", (req, res) => {
     });
   }
 
-  const tx = createPendingTransaction({ chain, from, to, amount });
+  const tx = createPendingTransaction({ chain, from, to, amount, network });
   res.status(201).json(publicTransaction(tx));
 });
 
@@ -474,7 +505,7 @@ app.get("/tx/:address", (req, res) => {
 });
 
 app.use((req, res, next) => {
-  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner", "/market"];
+  const apiPrefixes = ["/wallet", "/balance", "/tx", "/chains", "/owner", "/market", "/networks"];
   if (apiPrefixes.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
     return res.status(404).json({ error: "Route not found." });
   }

@@ -23,6 +23,7 @@ A closed-system, multi-chain crypto wallet. It does not connect to real blockcha
 - Market prices and 24h charts are fetched through CoinGecko via the backend.
 - Send form supports wallet address or PayPal email destination mode.
 - Telegram users can receive bot notifications when incoming transfers confirm.
+- USDT transfers include network selection: ERC20, TRC20, BEP20, Polygon, Arbitrum, Optimism, Solana, and Avalanche C-Chain.
 
 ## Run locally
 

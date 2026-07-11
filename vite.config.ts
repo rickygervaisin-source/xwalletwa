@@ -12,7 +12,8 @@ export default defineConfig({
       "/tx": "http://localhost:4000",
       "/chains": "http://localhost:4000",
       "/owner": "http://localhost:4000",
-      "/market": "http://localhost:4000"
+      "/market": "http://localhost:4000",
+      "/networks": "http://localhost:4000"
     }
   }
 });
