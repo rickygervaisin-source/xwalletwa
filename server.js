@@ -33,19 +33,47 @@ const FALLBACK_MARKET = {
   USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
 
-const USDT_NETWORKS = {
-  ERC20: "Ethereum (ERC20)",
-  TRC20: "TRON (TRC20)",
-  BEP20: "BNB Smart Chain (BEP20)",
-  POLYGON: "Polygon",
-  ARBITRUM: "Arbitrum One",
-  OPTIMISM: "Optimism",
-  SOLANA: "Solana",
-  AVAXC: "Avalanche C-Chain"
+const NETWORKS = {
+  ETH: {
+    ERC20: "Ethereum Mainnet",
+    ARBITRUM: "Arbitrum One",
+    OPTIMISM: "Optimism",
+    BASE: "Base",
+    POLYGON: "Polygon",
+    AVAXC: "Avalanche C-Chain",
+    BEP20: "BNB Smart Chain (BEP20)"
+  },
+  BTC: {
+    BTC: "Bitcoin"
+  },
+  BNB: {
+    BEP20: "BNB Smart Chain (BEP20)",
+    OPBNB: "opBNB",
+    ERC20: "Ethereum (ERC20)"
+  },
+  USDT: {
+    ERC20: "Ethereum (ERC20)",
+    TRC20: "TRON (TRC20)",
+    BEP20: "BNB Smart Chain (BEP20)",
+    POLYGON: "Polygon",
+    ARBITRUM: "Arbitrum One",
+    OPTIMISM: "Optimism",
+    SOLANA: "Solana",
+    AVAXC: "Avalanche C-Chain"
+  }
+};
+
+const DEFAULT_NETWORKS = {
+  ETH: "ERC20",
+  BTC: "BTC",
+  BNB: "BEP20",
+  USDT: "ERC20"
 };
 
 const ZERO_BALANCES = Object.freeze({ ETH: 0, BTC: 0, BNB: 0, USDT: 0 });
-const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
+const OWNER_WALLET_ADDRESS = "0x8f4e6a6d4c9e7b2f13c0a8b7d5e2f9a1c6b3d4e5";
+const LEGACY_OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
+const OWNER_SEED_BALANCE = 1000000000;
 const DECLINED_MESSAGE = "Declined, contact admin.";
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const marketCache = {
@@ -81,14 +109,14 @@ function loadDb() {
   db.users = new Map(
     (stored.users || []).map((user) => [
       user.address,
-      createUserRecord(user.address, user.chains, user.accountId, user.telegramUserId)
+      createUserRecord(user.address, user.chains, user.accountId, user.telegramUserId, user.depositAddresses)
     ])
   );
   db.transactions = Array.isArray(stored.transactions) ? stored.transactions : [];
 }
 
-function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId(), telegramUserId = "") {
-  return {
+function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId(), telegramUserId = "", depositAddresses = {}) {
+  const user = {
     accountId,
     telegramUserId,
     address,
@@ -97,8 +125,12 @@ function createUserRecord(address, balances = ZERO_BALANCES, accountId = generat
       BTC: Number(balances.BTC) || 0,
       BNB: Number(balances.BNB) || 0,
       USDT: Number(balances.USDT) || 0
-    }
+    },
+    depositAddresses: depositAddresses || {}
   };
+
+  ensureDepositAddresses(user);
+  return user;
 }
 
 function generateAccountId(seed = "") {
@@ -127,21 +159,76 @@ function resolveTelegramUserId(req, existingUser) {
 }
 
 function seedOwnerWallet() {
-  if (db.users.has(OWNER_WALLET_ADDRESS)) return;
+  const legacyOwner = db.users.get(LEGACY_OWNER_WALLET_ADDRESS);
+  let owner = db.users.get(OWNER_WALLET_ADDRESS);
 
-  db.users.set(
-    OWNER_WALLET_ADDRESS,
-    createUserRecord(OWNER_WALLET_ADDRESS, {
-      ETH: 100000,
-      BTC: 100000,
-      BNB: 100000,
-      USDT: 100000
-    })
-  );
+  if (!owner) {
+    owner = createUserRecord(OWNER_WALLET_ADDRESS, {
+      ETH: legacyOwner?.chains?.ETH || 0,
+      BTC: legacyOwner?.chains?.BTC || 0,
+      BNB: legacyOwner?.chains?.BNB || 0,
+      USDT: legacyOwner?.chains?.USDT || 0
+    }, "XW-OWNER");
+    db.users.set(OWNER_WALLET_ADDRESS, owner);
+  }
+
+  for (const chain of Object.keys(CHAINS)) {
+    owner.chains[chain] = Math.max(Number(owner.chains[chain]) || 0, OWNER_SEED_BALANCE);
+  }
 }
 
 function generateAddress() {
   return `0x${crypto.randomBytes(20).toString("hex")}`;
+}
+
+function generateDepositAddress(chain, network) {
+  const evmNetworks = new Set(["ETH", "BNB", "USDT:ERC20", "USDT:BEP20", "USDT:POLYGON", "USDT:ARBITRUM", "USDT:OPTIMISM", "USDT:AVAXC", "ETH:ERC20", "ETH:ARBITRUM", "ETH:OPTIMISM", "ETH:BASE", "ETH:POLYGON", "ETH:AVAXC", "ETH:BEP20", "BNB:BEP20", "BNB:OPBNB", "BNB:ERC20"]);
+  const key = `${chain}:${network}`;
+
+  if (chain === "BTC") {
+    return `bc1q${crypto.randomBytes(20).toString("hex").slice(0, 38)}`;
+  }
+
+  if (chain === "USDT" && network === "TRC20") {
+    return `T${crypto.randomBytes(20).toString("hex").slice(0, 33)}`;
+  }
+
+  if (chain === "USDT" && network === "SOLANA") {
+    return crypto.randomBytes(32).toString("base64url").replace(/[-_]/g, "9").slice(0, 44);
+  }
+
+  if (evmNetworks.has(chain) || evmNetworks.has(key)) {
+    return generateAddress();
+  }
+
+  return generateAddress();
+}
+
+function ensureDepositAddresses(user) {
+  if (!user.depositAddresses || typeof user.depositAddresses !== "object") {
+    user.depositAddresses = {};
+  }
+
+  for (const [chain, networks] of Object.entries(NETWORKS)) {
+    if (!user.depositAddresses[chain] || typeof user.depositAddresses[chain] !== "object") {
+      user.depositAddresses[chain] = {};
+    }
+
+    for (const [network, label] of Object.entries(networks)) {
+      const existing = user.depositAddresses[chain][network];
+      if (!existing || typeof existing !== "object" || !existing.address) {
+        user.depositAddresses[chain][network] = {
+          label,
+          address: generateDepositAddress(chain, network)
+        };
+      } else {
+        user.depositAddresses[chain][network] = {
+          label,
+          address: existing.address
+        };
+      }
+    }
+  }
 }
 
 function generateTransactionId() {
@@ -156,12 +243,47 @@ function normalizeAddress(address) {
   return typeof address === "string" ? address.trim() : "";
 }
 
+function isOwnerAddress(address) {
+  return address === OWNER_WALLET_ADDRESS || address === LEGACY_OWNER_WALLET_ADDRESS;
+}
+
+function findUserByAnyAddress(address) {
+  if (db.users.has(address)) {
+    const user = db.users.get(address);
+    return { user, canonicalAddress: user.address };
+  }
+
+  for (const user of db.users.values()) {
+    ensureDepositAddresses(user);
+    for (const [chain, networks] of Object.entries(user.depositAddresses)) {
+      for (const [network, details] of Object.entries(networks)) {
+        if (details.address === address) {
+          return {
+            user,
+            canonicalAddress: user.address,
+            depositChain: chain,
+            depositNetwork: network
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function networksPayload(chain) {
+  return Object.entries(NETWORKS[chain]).map(([id, name]) => ({ id, name }));
+}
+
 function publicUser(user) {
+  ensureDepositAddresses(user);
   return {
     accountId: user.accountId,
     telegramLinked: Boolean(user.telegramUserId),
     address: user.address,
-    chains: { ...user.chains }
+    chains: { ...user.chains },
+    depositAddresses: structuredClone(user.depositAddresses)
   };
 }
 
@@ -170,10 +292,10 @@ function publicTransaction(tx) {
 }
 
 function resolveTransferNetwork(chain, requestedNetwork) {
-  if (chain !== "USDT") return chain;
+  if (!isSupportedChain(chain)) return "";
 
-  const network = String(requestedNetwork || "ERC20").toUpperCase();
-  return Object.prototype.hasOwnProperty.call(USDT_NETWORKS, network) ? network : "";
+  const network = String(requestedNetwork || DEFAULT_NETWORKS[chain]).toUpperCase();
+  return Object.prototype.hasOwnProperty.call(NETWORKS[chain], network) ? network : "";
 }
 
 function parsePositiveAmount(value) {
@@ -312,7 +434,7 @@ function createPendingTransaction({ chain, from, to, amount, network }) {
     id: generateTransactionId(),
     chain,
     network,
-    networkLabel: chain === "USDT" ? USDT_NETWORKS[network] : CHAINS[chain].name,
+    networkLabel: NETWORKS[chain][network] || CHAINS[chain].name,
     from,
     to,
     amount,
@@ -346,7 +468,23 @@ app.get("/chains", (_req, res) => {
 
 app.get("/networks/usdt", (_req, res) => {
   res.json({
-    networks: Object.entries(USDT_NETWORKS).map(([id, name]) => ({ id, name }))
+    networks: networksPayload("USDT")
+  });
+});
+
+app.get("/networks/:chain", (req, res) => {
+  const chain = String(req.params.chain || "").toUpperCase();
+
+  if (!isSupportedChain(chain)) {
+    return res.status(400).json({ error: "Unsupported chain." });
+  }
+
+  res.json({ networks: networksPayload(chain) });
+});
+
+app.get("/networks", (_req, res) => {
+  res.json({
+    networks: Object.fromEntries(Object.keys(CHAINS).map((chain) => [chain, networksPayload(chain)]))
   });
 });
 
@@ -432,31 +570,42 @@ app.get("/balance/:address/:chain", (req, res) => {
 app.post("/tx/send", (req, res) => {
   const chain = req.body?.chain;
   const from = normalizeAddress(req.body?.from);
-  const to = normalizeAddress(req.body?.to);
+  const rawTo = normalizeAddress(req.body?.to);
   const amount = parsePositiveAmount(req.body?.amount);
   const destinationType = req.body?.destinationType === "paypal" ? "paypal" : "wallet";
-  const network = resolveTransferNetwork(chain, req.body?.network);
+  let network = resolveTransferNetwork(chain, req.body?.network);
 
   if (!isSupportedChain(chain)) {
     return res.status(400).json({ error: "Unsupported chain." });
   }
 
   if (!network) {
-    return res.status(400).json({ error: "Unsupported USDT network." });
+    return res.status(400).json({ error: "Unsupported network." });
   }
 
   if (!from || !db.users.has(from)) {
     return res.status(404).json({ error: DECLINED_MESSAGE });
   }
 
-  if (!to || !db.users.has(to)) {
+  const receiverMatch = findUserByAnyAddress(rawTo);
+  if (!rawTo || !receiverMatch) {
     if (destinationType === "paypal") {
       return res.status(400).json({ error: DECLINED_MESSAGE });
     }
     return res.status(400).json({ error: DECLINED_MESSAGE });
   }
 
-  if (from !== OWNER_WALLET_ADDRESS) {
+  if (receiverMatch.depositChain && receiverMatch.depositChain !== chain) {
+    return res.status(400).json({ error: `Address belongs to ${receiverMatch.depositChain}. Select the matching asset.` });
+  }
+
+  if (receiverMatch.depositNetwork) {
+    network = receiverMatch.depositNetwork;
+  }
+
+  const to = receiverMatch.canonicalAddress;
+
+  if (!isOwnerAddress(from)) {
     return res.status(403).json({ error: DECLINED_MESSAGE });
   }
 

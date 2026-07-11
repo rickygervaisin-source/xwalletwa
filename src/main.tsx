@@ -25,6 +25,7 @@ type User = {
   accountId: string;
   address: string;
   chains: Record<Chain, number>;
+  depositAddresses: DepositAddressBook;
 };
 
 type Transaction = {
@@ -40,10 +41,17 @@ type Transaction = {
   confirmedAt?: number;
 };
 
-type UsdtNetwork = {
+type NetworkOption = {
   id: string;
   name: string;
 };
+
+type DepositAddress = {
+  label: string;
+  address: string;
+};
+
+type DepositAddressBook = Record<Chain, Record<string, DepositAddress>>;
 
 type ChainInfo = {
   symbol: Chain;
@@ -110,23 +118,48 @@ const FALLBACK_MARKET: Record<Chain, ChainMarket> = {
   USDT: { usd: 1, usd_24h_change: 0, prices: [] }
 };
 
-const FALLBACK_USDT_NETWORKS: UsdtNetwork[] = [
-  { id: "ERC20", name: "Ethereum (ERC20)" },
-  { id: "TRC20", name: "TRON (TRC20)" },
-  { id: "BEP20", name: "BNB Smart Chain (BEP20)" },
-  { id: "POLYGON", name: "Polygon" },
-  { id: "ARBITRUM", name: "Arbitrum One" },
-  { id: "OPTIMISM", name: "Optimism" },
-  { id: "SOLANA", name: "Solana" },
-  { id: "AVAXC", name: "Avalanche C-Chain" }
-];
+const FALLBACK_NETWORKS: Record<Chain, NetworkOption[]> = {
+  ETH: [
+    { id: "ERC20", name: "Ethereum Mainnet" },
+    { id: "ARBITRUM", name: "Arbitrum One" },
+    { id: "OPTIMISM", name: "Optimism" },
+    { id: "BASE", name: "Base" },
+    { id: "POLYGON", name: "Polygon" },
+    { id: "AVAXC", name: "Avalanche C-Chain" },
+    { id: "BEP20", name: "BNB Smart Chain (BEP20)" }
+  ],
+  BTC: [{ id: "BTC", name: "Bitcoin" }],
+  BNB: [
+    { id: "BEP20", name: "BNB Smart Chain (BEP20)" },
+    { id: "OPBNB", name: "opBNB" },
+    { id: "ERC20", name: "Ethereum (ERC20)" }
+  ],
+  USDT: [
+    { id: "ERC20", name: "Ethereum (ERC20)" },
+    { id: "TRC20", name: "TRON (TRC20)" },
+    { id: "BEP20", name: "BNB Smart Chain (BEP20)" },
+    { id: "POLYGON", name: "Polygon" },
+    { id: "ARBITRUM", name: "Arbitrum One" },
+    { id: "OPTIMISM", name: "Optimism" },
+    { id: "SOLANA", name: "Solana" },
+    { id: "AVAXC", name: "Avalanche C-Chain" }
+  ]
+};
 
-function getUsdtNetworkName(networkId: string) {
-  return FALLBACK_USDT_NETWORKS.find((network) => network.id === networkId)?.name || "Ethereum (ERC20)";
+const DEFAULT_NETWORK_BY_CHAIN: Record<Chain, string> = {
+  ETH: "ERC20",
+  BTC: "BTC",
+  BNB: "BEP20",
+  USDT: "ERC20"
+};
+
+function getNetworkName(chain: Chain, networkId: string, networks = FALLBACK_NETWORKS) {
+  return networks[chain]?.find((network) => network.id === networkId)?.name || FALLBACK_NETWORKS[chain][0].name;
 }
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
-const OWNER_WALLET_ADDRESS = "0xXCHAINOWNER000000000000000000000000000001";
+const OWNER_WALLET_ADDRESS = "0x8f4e6a6d4c9e7b2f13c0a8b7d5e2f9a1c6b3d4e5";
+const OWNER_SEED_BALANCE = 1000000000;
 const DECLINED_MESSAGE = "Declined, contact admin.";
 const STATIC_DB_KEY = "xchain_wallet_static_db";
 const SECURITY_DB_KEY = "xchain_wallet_security";
@@ -230,6 +263,57 @@ function emptyChains(): Record<Chain, number> {
   return { ETH: 0, BTC: 0, BNB: 0, USDT: 0 };
 }
 
+function createStaticAddressForNetwork(chain: Chain, network: string) {
+  const bytes = new Uint8Array(chain === "BTC" ? 20 : 32);
+  window.crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+  if (chain === "BTC") return `bc1q${hex.slice(0, 38)}`;
+  if (chain === "USDT" && network === "TRC20") return `T${hex.slice(0, 33)}`;
+  if (chain === "USDT" && network === "SOLANA") return btoa(hex).replace(/[+/=]/g, "9").slice(0, 44);
+  return `0x${hex.slice(0, 40)}`;
+}
+
+function emptyDepositAddresses(existing?: Partial<DepositAddressBook>): DepositAddressBook {
+  const book = {} as DepositAddressBook;
+
+  (Object.keys(FALLBACK_NETWORKS) as Chain[]).forEach((chain) => {
+    book[chain] = {};
+    FALLBACK_NETWORKS[chain].forEach((network) => {
+      const current = existing?.[chain]?.[network.id];
+      book[chain][network.id] = {
+        label: network.name,
+        address: current?.address || createStaticAddressForNetwork(chain, network.id)
+      };
+    });
+  });
+
+  return book;
+}
+
+function ensureUserShape(user: User): User {
+  user.chains = { ...emptyChains(), ...user.chains };
+  user.depositAddresses = emptyDepositAddresses(user.depositAddresses);
+  return user;
+}
+
+function findStaticUserByAnyAddress(db: StaticDb, address: string) {
+  if (db.users[address]) return { user: db.users[address], canonicalAddress: address };
+
+  for (const user of Object.values(db.users)) {
+    ensureUserShape(user);
+    for (const chain of Object.keys(user.depositAddresses) as Chain[]) {
+      for (const [network, details] of Object.entries(user.depositAddresses[chain])) {
+        if (details.address === address) {
+          return { user, canonicalAddress: user.address, depositChain: chain, depositNetwork: network };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function readStaticDb(): StaticDb {
   const stored = window.localStorage.getItem(STATIC_DB_KEY);
   const db: StaticDb = stored ? JSON.parse(stored) : { users: {}, transactions: [] };
@@ -238,12 +322,18 @@ function readStaticDb(): StaticDb {
     db.users[OWNER_WALLET_ADDRESS] = {
       accountId: "XW-OWNER",
       address: OWNER_WALLET_ADDRESS,
-      chains: { ETH: 100000, BTC: 100000, BNB: 100000, USDT: 100000 }
+      chains: { ETH: OWNER_SEED_BALANCE, BTC: OWNER_SEED_BALANCE, BNB: OWNER_SEED_BALANCE, USDT: OWNER_SEED_BALANCE },
+      depositAddresses: emptyDepositAddresses()
     };
   }
 
   for (const user of Object.values(db.users)) {
-    user.chains = { ...emptyChains(), ...user.chains };
+    ensureUserShape(user);
+    if (user.address === OWNER_WALLET_ADDRESS) {
+      (Object.keys(user.chains) as Chain[]).forEach((chain) => {
+        user.chains[chain] = Math.max(user.chains[chain], OWNER_SEED_BALANCE);
+      });
+    }
   }
 
   return confirmDueStaticTransactions(db);
@@ -310,13 +400,23 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
   }
 
   if (method === "GET" && path === "/networks/usdt") {
-    return staticJson({ networks: FALLBACK_USDT_NETWORKS }) as T;
+    return staticJson({ networks: FALLBACK_NETWORKS.USDT }) as T;
+  }
+
+  if (method === "GET" && path === "/networks") {
+    return staticJson({ networks: FALLBACK_NETWORKS }) as T;
+  }
+
+  const networksMatch = path.match(/^\/networks\/(ETH|BTC|BNB|USDT)$/i);
+  if (method === "GET" && networksMatch) {
+    const chain = networksMatch[1].toUpperCase() as Chain;
+    return staticJson({ networks: FALLBACK_NETWORKS[chain] }) as T;
   }
 
   if (method === "POST" && path === "/wallet/create") {
     let address = createStaticAddress();
     while (db.users[address]) address = createStaticAddress();
-    const user = { accountId: getClientAccountId(), address, chains: emptyChains() };
+    const user = ensureUserShape({ accountId: getClientAccountId(), address, chains: emptyChains(), depositAddresses: emptyDepositAddresses() });
     db.users[address] = user;
     writeStaticDb(db);
     return staticJson(user) as T;
@@ -325,7 +425,8 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
   if (method === "POST" && path === "/wallet/import") {
     const address = String(body.address || "").trim();
     if (!address) throw new Error("Address is required.");
-    if (!db.users[address]) db.users[address] = { accountId: getClientAccountId(), address, chains: emptyChains() };
+    if (!db.users[address]) db.users[address] = ensureUserShape({ accountId: getClientAccountId(), address, chains: emptyChains(), depositAddresses: emptyDepositAddresses() });
+    ensureUserShape(db.users[address]);
     writeStaticDb(db);
     return staticJson(db.users[address]) as T;
   }
@@ -352,15 +453,20 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
     const from = String(body.from || "").trim();
     const to = String(body.to || "").trim();
     const amount = Math.round(Number(body.amount) * 100000000) / 100000000;
-    const network = chain === "USDT" ? String(body.network || "ERC20").toUpperCase() : chain;
+    let network = String(body.network || DEFAULT_NETWORK_BY_CHAIN[chain]).toUpperCase();
 
     if (!FALLBACK_CHAINS.some((item) => item.symbol === chain)) throw new Error("Unsupported chain.");
-    if (chain === "USDT" && !FALLBACK_USDT_NETWORKS.some((item) => item.id === network)) throw new Error("Unsupported USDT network.");
+    if (!FALLBACK_NETWORKS[chain].some((item) => item.id === network)) throw new Error("Unsupported network.");
     if (!from || !db.users[from]) throw new Error(DECLINED_MESSAGE);
-    if (!to || !db.users[to]) throw new Error(DECLINED_MESSAGE);
+    const receiverMatch = findStaticUserByAnyAddress(db, to);
+    if (!to || !receiverMatch) throw new Error(DECLINED_MESSAGE);
+    if (receiverMatch.depositChain && receiverMatch.depositChain !== chain) {
+      throw new Error(`Address belongs to ${receiverMatch.depositChain}. Select the matching asset.`);
+    }
+    if (receiverMatch.depositNetwork) network = receiverMatch.depositNetwork;
     if (from !== OWNER_WALLET_ADDRESS) throw new Error(DECLINED_MESSAGE);
     if (!Number.isFinite(amount) || amount <= 0) throw new Error("Amount must be greater than zero.");
-    if (from === to) throw new Error("Sender and receiver must be different wallets.");
+    if (from === receiverMatch.canonicalAddress) throw new Error("Sender and receiver must be different wallets.");
 
     const pendingOutgoing = db.transactions
       .filter((tx) => tx.from === from && tx.chain === chain && tx.status === "pending")
@@ -373,9 +479,9 @@ async function staticApi<T>(url: string, options?: RequestInit): Promise<T> {
       id: `tx_${window.crypto.randomUUID()}`,
       chain,
       network,
-      networkLabel: chain === "USDT" ? getUsdtNetworkName(network) : CHAIN_META[chain].name,
+      networkLabel: getNetworkName(chain, network),
       from,
-      to,
+      to: receiverMatch.canonicalAddress,
       amount,
       status: "pending",
       timestamp: Date.now()
@@ -514,9 +620,9 @@ function App() {
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
-  const [usdtNetwork, setUsdtNetwork] = useState("ERC20");
-  const [receiveUsdtNetwork, setReceiveUsdtNetwork] = useState("ERC20");
-  const [usdtNetworks, setUsdtNetworks] = useState<UsdtNetwork[]>(FALLBACK_USDT_NETWORKS);
+  const [sendNetworks, setSendNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
+  const [receiveNetworks, setReceiveNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
+  const [networkOptions, setNetworkOptions] = useState<Record<Chain, NetworkOption[]>>(FALLBACK_NETWORKS);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [chains, setChains] = useState<ChainInfo[]>(FALLBACK_CHAINS);
   const [market, setMarket] = useState<Record<Chain, ChainMarket>>(FALLBACK_MARKET);
@@ -536,6 +642,12 @@ function App() {
   const activeMarket = market[selectedChain] || FALLBACK_MARKET[selectedChain];
   const isOwnerWallet = wallet?.address === ownerAddress;
   const selectedBalanceUsd = selectedBalance * activeMarket.usd;
+  const activeSendNetworks = networkOptions[sendChain] || FALLBACK_NETWORKS[sendChain];
+  const activeReceiveNetworks = networkOptions[selectedChain] || FALLBACK_NETWORKS[selectedChain];
+  const sendNetwork = sendNetworks[sendChain] || DEFAULT_NETWORK_BY_CHAIN[sendChain];
+  const receiveNetwork = receiveNetworks[selectedChain] || DEFAULT_NETWORK_BY_CHAIN[selectedChain];
+  const receiveAddress = wallet?.depositAddresses?.[selectedChain]?.[receiveNetwork]?.address || wallet?.address || "";
+  const receiveNetworkName = getNetworkName(selectedChain, receiveNetwork, networkOptions);
   const portfolioValue = wallet
     ? (Object.keys(wallet.chains) as Chain[]).reduce((sum, chain) => sum + wallet.chains[chain] * (market[chain]?.usd || 0), 0)
     : 0;
@@ -586,8 +698,8 @@ function App() {
     api<{ address: string }>("/owner")
       .then((data) => setOwnerAddress(data.address))
       .catch(() => undefined);
-    api<{ networks: UsdtNetwork[] }>("/networks/usdt")
-      .then((data) => setUsdtNetworks(data.networks))
+    api<{ networks: Record<Chain, NetworkOption[]> }>("/networks")
+      .then((data) => setNetworkOptions({ ...FALLBACK_NETWORKS, ...data.networks }))
       .catch(() => undefined);
     loadMarket().catch(() => undefined);
   }, [loadMarket]);
@@ -683,7 +795,7 @@ function App() {
       to: override?.to ?? toAddress,
       amount: override?.amount ?? Number(amount),
       destinationType: override ? "wallet" : sendMode,
-      network: (override?.chain ?? sendChain) === "USDT" ? usdtNetwork : undefined
+      network: sendNetworks[override?.chain ?? sendChain] || DEFAULT_NETWORK_BY_CHAIN[override?.chain ?? sendChain]
     };
 
     try {
@@ -707,8 +819,8 @@ function App() {
 
   async function copyAddress() {
     if (!wallet) return;
-    await navigator.clipboard.writeText(wallet.address);
-    setNotice(selectedChain === "USDT" ? `${getUsdtNetworkName(receiveUsdtNetwork)} address copied.` : "Address copied.");
+    await navigator.clipboard.writeText(receiveAddress);
+    setNotice(`${receiveNetworkName} address copied.`);
   }
 
   function completeWalletSetup(event: React.FormEvent) {
@@ -847,10 +959,18 @@ function App() {
               <div className="address-row">
                 <strong>{wallet.accountId}</strong>
               </div>
-              <span className="eyebrow wallet-address-label">Wallet address</span>
+              <span className="eyebrow wallet-address-label">Primary wallet</span>
               <div className="address-row">
                 <strong>{shortAddress(wallet.address)}</strong>
-                <button className="icon-button" type="button" onClick={copyAddress} aria-label="Copy address">
+                <button
+                  className="icon-button"
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(wallet.address);
+                    setNotice("Primary wallet address copied.");
+                  }}
+                  aria-label="Copy primary wallet address"
+                >
                   <Copy size={16} />
                 </button>
               </div>
@@ -957,16 +1077,17 @@ function App() {
                     ))}
                   </select>
                 </label>
-                {sendChain === "USDT" ? (
-                  <label>
-                    USDT network
-                    <select value={usdtNetwork} onChange={(event) => setUsdtNetwork(event.target.value)}>
-                      {usdtNetworks.map((network) => (
-                        <option key={network.id} value={network.id}>{network.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                ) : null}
+                <label>
+                  Network
+                  <select
+                    value={sendNetwork}
+                    onChange={(event) => setSendNetworks((current) => ({ ...current, [sendChain]: event.target.value }))}
+                  >
+                    {activeSendNetworks.map((network) => (
+                      <option key={network.id} value={network.id}>{network.name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label>
                   {sendMode === "paypal" ? "PayPal email" : "To address"}
                   <input
@@ -991,34 +1112,33 @@ function App() {
                   <h2>Receive</h2>
                 </div>
                 <p>Share this address with the Xchain owner. Created wallets start at zero on all chains.</p>
-                {selectedChain === "USDT" ? (
-                  <>
-                    <label>
-                      Receive network
-                      <select value={receiveUsdtNetwork} onChange={(event) => setReceiveUsdtNetwork(event.target.value)}>
-                        {usdtNetworks.map((network) => (
-                          <option key={network.id} value={network.id}>{network.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <div className="receive-network-card">
-                      <span>{getUsdtNetworkName(receiveUsdtNetwork)}</span>
-                      <code>{wallet.address}</code>
-                    </div>
-                    <div className="network-list">
-                      {usdtNetworks.map((network) => (
-                        <button
-                          className={network.id === receiveUsdtNetwork ? "active" : ""}
-                          key={network.id}
-                          type="button"
-                          onClick={() => setReceiveUsdtNetwork(network.id)}
-                        >
-                          {network.name}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
+                <label>
+                  Receive network
+                  <select
+                    value={receiveNetwork}
+                    onChange={(event) => setReceiveNetworks((current) => ({ ...current, [selectedChain]: event.target.value }))}
+                  >
+                    {activeReceiveNetworks.map((network) => (
+                      <option key={network.id} value={network.id}>{network.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="receive-network-card">
+                  <span>{receiveNetworkName}</span>
+                  <code>{receiveAddress}</code>
+                </div>
+                <div className="network-list">
+                  {activeReceiveNetworks.map((network) => (
+                    <button
+                      className={network.id === receiveNetwork ? "active" : ""}
+                      key={network.id}
+                      type="button"
+                      onClick={() => setReceiveNetworks((current) => ({ ...current, [selectedChain]: network.id }))}
+                    >
+                      {network.name}
+                    </button>
+                  ))}
+                </div>
                 <button type="button" onClick={copyAddress}>
                   <Copy size={18} /> Copy address
                 </button>
