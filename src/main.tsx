@@ -306,6 +306,10 @@ function saveWalletSession(address: string) {
   );
 }
 
+function clearWalletSession() {
+  window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
+}
+
 function emptyChains(): Record<Chain, number> {
   return Object.fromEntries((Object.keys(CHAIN_META) as Chain[]).map((chain) => [chain, 0])) as Record<Chain, number>;
 }
@@ -678,6 +682,8 @@ function App() {
   const [walletSecurity, setWalletSecurity] = useState<WalletSecurity | null>(null);
   const [walletLocked, setWalletLocked] = useState(false);
   const [unlockPassword, setUnlockPassword] = useState("");
+  const [repairPassword, setRepairPassword] = useState("");
+  const [confirmRepairPassword, setConfirmRepairPassword] = useState("");
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
   const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
@@ -851,9 +857,15 @@ function App() {
     setNotice("");
     setLoading(true);
     try {
+      const requestedAddress = importAddress.trim();
+      if (!requestedAddress) {
+        setError("Enter a wallet address to import.");
+        return;
+      }
+      clearWalletSession();
       const user = await api<User>("/wallet/import", {
         method: "POST",
-        body: JSON.stringify({ address: importAddress })
+        body: JSON.stringify({ address: requestedAddress })
       });
       const security = getWalletSecurity(user.address);
       setWallet(user);
@@ -870,12 +882,14 @@ function App() {
   }
 
   function switchWallet() {
-    window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
+    clearWalletSession();
     setWallet(null);
     setPendingSetupWallet(null);
     setWalletSecurity(null);
     setWalletLocked(false);
     setUnlockPassword("");
+    setRepairPassword("");
+    setConfirmRepairPassword("");
     setTransactions([]);
     setSelectedTx(null);
     setAdminUsers([]);
@@ -964,6 +978,11 @@ function App() {
     setError("");
     setNotice("");
 
+    if (walletSecurity?.passwordSet && !walletSecurity.passwordHash) {
+      setError("This wallet needs a password upgrade before it can be unlocked.");
+      return;
+    }
+
     if (!walletSecurity?.passwordHash) {
       setWalletLocked(false);
       return;
@@ -977,6 +996,30 @@ function App() {
     setWalletLocked(false);
     setUnlockPassword("");
     setNotice("Wallet unlocked.");
+  }
+
+  async function upgradeLegacyPassword(event: React.FormEvent) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+
+    if (!wallet || !walletSecurity) return;
+    if (repairPassword.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (repairPassword !== confirmRepairPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    await saveWalletSecurity(wallet.address, walletSecurity.recoveryPhrase || generateRecoveryPhrase(), repairPassword);
+    const security = getWalletSecurity(wallet.address);
+    setWalletSecurity(security);
+    setWalletLocked(false);
+    setRepairPassword("");
+    setConfirmRepairPassword("");
+    setNotice("Password upgraded. Wallet unlocked.");
   }
 
   async function loadAdminUsers(query = adminQuery) {
@@ -1111,24 +1154,58 @@ function App() {
               <ShieldCheck size={18} />
               <h2>Wallet locked</h2>
             </div>
-            <p className="setup-copy">Enter your wallet password to continue.</p>
-            <form className="setup-form" onSubmit={unlockWallet}>
-              <label>
-                Password
-                <input
-                  value={unlockPassword}
-                  onChange={(event) => setUnlockPassword(event.target.value)}
-                  type="password"
-                  placeholder="Wallet password"
-                />
-              </label>
-              <button className="primary-button" type="submit" disabled={!unlockPassword}>
-                <Lock size={18} /> Unlock
-              </button>
-              <button className="secondary-button" type="button" onClick={switchWallet}>
-                <Import size={18} /> Import another wallet
-              </button>
-            </form>
+            {walletSecurity?.passwordSet && !walletSecurity.passwordHash ? (
+              <>
+                <p className="setup-copy">This saved wallet needs a password upgrade before it can unlock.</p>
+                <form className="setup-form" onSubmit={upgradeLegacyPassword}>
+                  <label>
+                    New password
+                    <input
+                      value={repairPassword}
+                      onChange={(event) => setRepairPassword(event.target.value)}
+                      type="password"
+                      placeholder="Minimum 8 characters"
+                    />
+                  </label>
+                  <label>
+                    Confirm password
+                    <input
+                      value={confirmRepairPassword}
+                      onChange={(event) => setConfirmRepairPassword(event.target.value)}
+                      type="password"
+                      placeholder="Repeat password"
+                    />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={!repairPassword || !confirmRepairPassword}>
+                    <KeyRound size={18} /> Upgrade password
+                  </button>
+                  <button className="secondary-button" type="button" onClick={switchWallet}>
+                    <Import size={18} /> Import another wallet
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <p className="setup-copy">Enter your wallet password to continue.</p>
+                <form className="setup-form" onSubmit={unlockWallet}>
+                  <label>
+                    Password
+                    <input
+                      value={unlockPassword}
+                      onChange={(event) => setUnlockPassword(event.target.value)}
+                      type="password"
+                      placeholder="Wallet password"
+                    />
+                  </label>
+                  <button className="primary-button" type="submit" disabled={!unlockPassword}>
+                    <Lock size={18} /> Unlock
+                  </button>
+                  <button className="secondary-button" type="button" onClick={switchWallet}>
+                    <Import size={18} /> Import another wallet
+                  </button>
+                </form>
+              </>
+            )}
           </div>
         ) : !wallet ? (
           <div className="welcome">
