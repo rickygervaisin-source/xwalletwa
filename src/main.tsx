@@ -224,9 +224,9 @@ type SendMode = "wallet" | "paypal" | "gcash" | "bank";
 
 const SEND_MODE_HINTS: Record<SendMode, string> = {
   wallet: "Send to another Xchain wallet address.",
-  paypal: "Cash out to a PayPal account via email (simulation).",
-  gcash: "Cash out to a GCash mobile number (simulation).",
-  bank: "Cash out to a Philippine bank account (simulation)."
+  paypal: "Cash out to a PayPal account via email.",
+  gcash: "Cash out to a GCash mobile number.",
+  bank: "Cash out to a Philippine bank account."
 };
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
