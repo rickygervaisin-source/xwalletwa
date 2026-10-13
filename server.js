@@ -748,7 +748,10 @@ app.post("/tx/send", (req, res) => {
   const from = normalizeAddress(req.body?.from);
   const rawTo = normalizeAddress(req.body?.to);
   const amount = parsePositiveAmount(req.body?.amount);
-  const destinationType = req.body?.destinationType === "paypal" ? "paypal" : "wallet";
+  const requestedDestinationType = req.body?.destinationType;
+  const destinationType = ["paypal", "gcash", "bank"].includes(requestedDestinationType)
+    ? requestedDestinationType
+    : "wallet";
   let network = resolveTransferNetwork(chain, req.body?.network);
 
   if (!isSupportedChain(chain)) {
