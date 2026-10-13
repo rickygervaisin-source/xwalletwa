@@ -584,6 +584,23 @@ select:focus {
   grid-template-columns: 1fr 1fr;
 }
 
+.mode-hint {
+  margin-top: -4px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: #3b5bdb;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.optional-tag {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .conversion-note {
   color: #64748b;
   font-size: 0.8rem;

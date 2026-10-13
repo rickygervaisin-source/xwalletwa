@@ -11,12 +11,14 @@ import {
   Lock,
   Import,
   KeyRound,
+  Landmark,
   Plus,
   QrCode,
   RefreshCw,
   Send,
   Settings,
   ShieldCheck,
+  Smartphone,
   TrendingUp,
   Wallet
 } from "lucide-react";
@@ -203,6 +205,29 @@ const DEFAULT_NETWORK_BY_CHAIN: Record<Chain, string> = {
 function getNetworkName(chain: Chain, networkId: string, networks = FALLBACK_NETWORKS) {
   return networks[chain]?.find((network) => network.id === networkId)?.name || FALLBACK_NETWORKS[chain][0].name;
 }
+
+const PH_BANKS = [
+  "BDO",
+  "BPI",
+  "Metrobank",
+  "Landbank",
+  "UnionBank",
+  "Security Bank",
+  "PNB",
+  "China Bank",
+  "RCBC",
+  "EastWest",
+  "Other"
+];
+
+type SendMode = "wallet" | "paypal" | "gcash" | "bank";
+
+const SEND_MODE_HINTS: Record<SendMode, string> = {
+  wallet: "Send to another Xchain wallet address.",
+  paypal: "Cash out to a PayPal account via email (simulation).",
+  gcash: "Cash out to a GCash mobile number (simulation).",
+  bank: "Cash out to a Philippine bank account (simulation)."
+};
 
 const ADMIN_TELEGRAM_URL = "https://t.me/privDm";
 const OWNER_WALLET_ADDRESS = "0x8f4e6a6d4c9e7b2f13c0a8b7d5e2f9a1c6b3d4e5";
@@ -686,7 +711,12 @@ function App() {
   const [confirmRepairPassword, setConfirmRepairPassword] = useState("");
   const [selectedChain, setSelectedChain] = useState<Chain>("ETH");
   const [sendChain, setSendChain] = useState<Chain>("ETH");
-  const [sendMode, setSendMode] = useState<"wallet" | "paypal">("wallet");
+  const [sendMode, setSendMode] = useState<SendMode>("wallet");
+  const [gcashNumber, setGcashNumber] = useState("");
+  const [gcashName, setGcashName] = useState("");
+  const [bankName, setBankName] = useState(PH_BANKS[0]);
+  const [bankAccountNumber, setBankAccountNumber] = useState("");
+  const [bankAccountName, setBankAccountName] = useState("");
   const [amountMode, setAmountMode] = useState<"coin" | "usd">("coin");
   const [sendNetworks, setSendNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
   const [receiveNetworks, setReceiveNetworks] = useState<Record<Chain, string>>(DEFAULT_NETWORK_BY_CHAIN);
@@ -899,6 +929,25 @@ function App() {
     setError("");
   }
 
+  function sendDestination(): { to: string; destinationType: SendMode } {
+    if (sendMode === "gcash") {
+      const label = gcashName.trim() ? ` (${gcashName.trim()})` : "";
+      return { to: `GCash ${gcashNumber.trim()}${label}`, destinationType: "gcash" };
+    }
+    if (sendMode === "bank") {
+      const label = bankAccountName.trim() ? ` • ${bankAccountName.trim()}` : "";
+      return { to: `${bankName} • ${bankAccountNumber.trim()}${label}`, destinationType: "bank" };
+    }
+    return { to: toAddress, destinationType: sendMode };
+  }
+
+  const isSendReady =
+    sendMode === "gcash"
+      ? gcashNumber.trim().length > 0
+      : sendMode === "bank"
+        ? bankAccountNumber.trim().length > 0
+        : toAddress.trim().length > 0;
+
   async function sendTransaction(event?: React.FormEvent, override?: Partial<{ from: string; to: string; amount: number; chain: Chain }>) {
     event?.preventDefault();
     if (!wallet && !override?.from) return;
@@ -907,12 +956,13 @@ function App() {
     setNotice("");
     setLoading(true);
 
+    const destination = sendDestination();
     const payload = {
       chain: override?.chain ?? sendChain,
       from: override?.from ?? wallet!.address,
-      to: override?.to ?? toAddress,
+      to: override?.to ?? destination.to,
       amount: override?.amount ?? computedSendAmount,
-      destinationType: override ? "wallet" : sendMode,
+      destinationType: override ? "wallet" : destination.destinationType,
       network: sendNetworks[override?.chain ?? sendChain] || DEFAULT_NETWORK_BY_CHAIN[override?.chain ?? sendChain]
     };
 
@@ -925,6 +975,10 @@ function App() {
       setNotice(`${tx.chain} transaction is pending. Balance updates after confirmation.`);
       if (!override) {
         setToAddress("");
+        setGcashNumber("");
+        setGcashName("");
+        setBankAccountNumber("");
+        setBankAccountName("");
         setAmount("");
         setUsdAmount("");
       }
@@ -1345,7 +1399,14 @@ function App() {
                   <button className={sendMode === "paypal" ? "active" : ""} type="button" onClick={() => setSendMode("paypal")}>
                     <CreditCard size={16} /> PayPal
                   </button>
+                  <button className={sendMode === "gcash" ? "active" : ""} type="button" onClick={() => setSendMode("gcash")}>
+                    <Smartphone size={16} /> GCash
+                  </button>
+                  <button className={sendMode === "bank" ? "active" : ""} type="button" onClick={() => setSendMode("bank")}>
+                    <Landmark size={16} /> Bank
+                  </button>
                 </div>
+                <div className="mode-hint">{SEND_MODE_HINTS[sendMode]}</div>
                 <label>
                   Chain
                   <select value={sendChain} onChange={(event) => setSendChain(event.target.value as Chain)}>
@@ -1365,15 +1426,71 @@ function App() {
                     ))}
                   </select>
                 </label>
-                <label>
-                  {sendMode === "paypal" ? "PayPal email" : "To address"}
-                  <input
-                    value={toAddress}
-                    onChange={(event) => setToAddress(event.target.value)}
-                    type={sendMode === "paypal" ? "email" : "text"}
-                    placeholder={sendMode === "paypal" ? "name@example.com" : "0x..."}
-                  />
-                </label>
+                {sendMode === "gcash" ? (
+                  <>
+                    <label>
+                      GCash mobile number
+                      <input
+                        value={gcashNumber}
+                        onChange={(event) => setGcashNumber(event.target.value)}
+                        type="tel"
+                        inputMode="tel"
+                        placeholder="+63 9XX XXX XXXX"
+                      />
+                    </label>
+                    <label>
+                      Account name <span className="optional-tag">(optional)</span>
+                      <input
+                        value={gcashName}
+                        onChange={(event) => setGcashName(event.target.value)}
+                        type="text"
+                        placeholder="Receiver's GCash name"
+                      />
+                    </label>
+                  </>
+                ) : sendMode === "bank" ? (
+                  <>
+                    <label>
+                      Bank
+                      <select value={bankName} onChange={(event) => setBankName(event.target.value)}>
+                        {PH_BANKS.map((bank) => (
+                          <option key={bank} value={bank}>{bank}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="two-col">
+                      <label>
+                        Account number
+                        <input
+                          value={bankAccountNumber}
+                          onChange={(event) => setBankAccountNumber(event.target.value)}
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="Enter account number"
+                        />
+                      </label>
+                      <label>
+                        Account name <span className="optional-tag">(optional)</span>
+                        <input
+                          value={bankAccountName}
+                          onChange={(event) => setBankAccountName(event.target.value)}
+                          type="text"
+                          placeholder="Account holder name"
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <label>
+                    {sendMode === "paypal" ? "PayPal email" : "To address"}
+                    <input
+                      value={toAddress}
+                      onChange={(event) => setToAddress(event.target.value)}
+                      type={sendMode === "paypal" ? "email" : "text"}
+                      placeholder={sendMode === "paypal" ? "name@example.com" : "0x..."}
+                    />
+                  </label>
+                )}
                 <label>
                   Amount type
                   <div className="send-mode-toggle compact-toggle">
@@ -1399,7 +1516,7 @@ function App() {
                   </label>
                 )}
                 <div className="conversion-note">Rate: 1 {sendChain} = {formatUsd(sendRate)}</div>
-                <button className="primary-button" type="submit" disabled={loading || !toAddress || !computedSendAmount}>
+                <button className="primary-button" type="submit" disabled={loading || !isSendReady || !computedSendAmount}>
                   <ArrowRightLeft size={18} /> Send
                 </button>
               </form>
