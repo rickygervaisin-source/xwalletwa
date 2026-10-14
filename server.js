@@ -130,7 +130,8 @@ const marketCache = {
 
 const db = {
   users: new Map(),
-  transactions: []
+  transactions: [],
+  notifications: []
 };
 
 function ensureDataDirectory() {
@@ -140,7 +141,8 @@ function ensureDataDirectory() {
 function serializeDb() {
   return {
     users: Array.from(db.users.values()),
-    transactions: db.transactions
+    transactions: db.transactions,
+    notifications: db.notifications
   };
 }
 
@@ -154,18 +156,22 @@ function loadDb() {
 
   const stored = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   db.users = new Map(
-    (stored.users || []).map((user) => [
-      user.address,
-      createUserRecord(user.address, user.chains, user.accountId, user.telegramUserId, user.depositAddresses)
-    ])
+    (stored.users || []).map((user) => {
+      const record = createUserRecord(user.address, user.chains, user.accountId, user.telegramUserId, user.depositAddresses, user.telegramUsername);
+      record.status = user.status === "disabled" ? "disabled" : "active";
+      return [user.address, record];
+    })
   );
   db.transactions = Array.isArray(stored.transactions) ? stored.transactions : [];
+  db.notifications = Array.isArray(stored.notifications) ? stored.notifications : [];
 }
 
-function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId(), telegramUserId = "", depositAddresses = {}) {
+function createUserRecord(address, balances = ZERO_BALANCES, accountId = generateAccountId(), telegramUserId = "", depositAddresses = {}, telegramUsername = "") {
   const user = {
     accountId,
     telegramUserId,
+    telegramUsername,
+    status: "active",
     address,
     chains: Object.fromEntries(Object.keys(CHAINS).map((chain) => [chain, Number(balances[chain]) || 0])),
     depositAddresses: depositAddresses || {}
@@ -198,6 +204,12 @@ function resolveAccountId(req, existingUser) {
 
 function resolveTelegramUserId(req, existingUser) {
   return existingUser?.telegramUserId || req.get("x-telegram-user-id") || "";
+}
+
+function resolveTelegramUsername(req, existingUser) {
+  const raw = String(req.get("x-telegram-username") || "").trim().replace(/^@/, "");
+  if (/^[A-Za-z0-9_]{1,32}$/.test(raw)) return raw;
+  return existingUser?.telegramUsername || "";
 }
 
 function seedOwnerWallet() {
@@ -359,6 +371,8 @@ function adminUserSummary(user) {
   return {
     accountId: user.accountId,
     address: user.address,
+    status: user.status === "disabled" ? "disabled" : "active",
+    telegramUsername: user.telegramUsername || "",
     telegramLinked: Boolean(user.telegramUserId),
     chains: { ...user.chains },
     depositAddresses: structuredClone(user.depositAddresses),
@@ -374,6 +388,8 @@ function publicUser(user) {
   ensureDepositAddresses(user);
   return {
     accountId: user.accountId,
+    status: user.status === "disabled" ? "disabled" : "active",
+    telegramUsername: user.telegramUsername || "",
     telegramLinked: Boolean(user.telegramUserId),
     address: user.address,
     chains: { ...user.chains },
@@ -448,8 +464,32 @@ async function getMarketData() {
   }
 }
 
+async function sendTelegramMessage(telegramUserId, text) {
+  if (!TELEGRAM_BOT_TOKEN || !telegramUserId) return false;
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: telegramUserId,
+        text
+      })
+    });
+
+    if (!response.ok) {
+      console.warn(`Telegram message failed: ${response.status}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn(`Telegram message failed: ${error.message}`);
+    return false;
+  }
+}
+
 async function sendTelegramNotification(user, tx) {
-  if (!TELEGRAM_BOT_TOKEN || !user.telegramUserId || tx.notifiedAt) return;
+  if (tx.notifiedAt) return;
 
   const message = [
     `${tx.chain} received${tx.networkLabel ? ` on ${tx.networkLabel}` : ""}`,
@@ -458,24 +498,9 @@ async function sendTelegramNotification(user, tx) {
     `Account: ${user.accountId}`
   ].join("\n");
 
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: user.telegramUserId,
-        text: message
-      })
-    });
-
-    if (response.ok) {
-      tx.notifiedAt = Date.now();
-      saveDb();
-    } else {
-      console.warn(`Telegram notification failed: ${response.status}`);
-    }
-  } catch (error) {
-    console.warn(`Telegram notification failed: ${error.message}`);
+  if (await sendTelegramMessage(user.telegramUserId, message)) {
+    tx.notifiedAt = Date.now();
+    saveDb();
   }
 }
 
@@ -657,6 +682,10 @@ app.post("/admin/fund", (req, res) => {
     return res.status(400).json({ error: `Address belongs to ${receiverMatch.depositChain}. Select the matching asset.` });
   }
 
+  if (receiverMatch.user.status === "disabled") {
+    return res.status(403).json({ error: "This account is disabled. Contact the administrator." });
+  }
+
   if (receiverMatch.depositNetwork) {
     network = receiverMatch.depositNetwork;
   }
@@ -674,11 +703,116 @@ app.post("/admin/fund", (req, res) => {
   res.status(201).json(publicTransaction(tx));
 });
 
+const NOTIFY_TEMPLATES = {
+  activated: {
+    title: "Account activated",
+    body: "Your Xchain Wallet account has been activated. You can now use your wallet normally."
+  },
+  disabled: {
+    title: "Account disabled",
+    body: "Your Xchain Wallet account has been disabled. Please contact the administrator."
+  }
+};
+
+app.post("/admin/notify", async (req, res) => {
+  if (!requireOwner(req, res)) return;
+
+  const { targets, template, message } = req.body || {};
+
+  let recipients;
+  if (targets === "all") {
+    recipients = Array.from(db.users.values()).filter((user) => !isOwnerAddress(user.address));
+  } else if (Array.isArray(targets) && targets.length > 0) {
+    const missing = [];
+    recipients = [];
+    for (const rawId of targets) {
+      const match = findUserByAnyAddress(normalizeAddress(rawId));
+      if (match && !isOwnerAddress(match.user.address)) {
+        recipients.push(match.user);
+      } else {
+        missing.push(String(rawId));
+      }
+    }
+    if (!recipients.length) {
+      return res.status(404).json({ error: "No matching users found.", missing });
+    }
+  } else {
+    return res.status(400).json({ error: "Select at least one user, or broadcast to all users." });
+  }
+
+  const tpl = NOTIFY_TEMPLATES[template];
+  const title = template === "custom" ? "Admin notice" : tpl?.title || "Admin notice";
+  const body = String(message || "").trim() || tpl?.body || "";
+  if (!body) {
+    return res.status(400).json({ error: "Message cannot be empty." });
+  }
+
+  let sent = 0;
+  let telegramSent = 0;
+  for (const user of recipients) {
+    if (template === "activated") user.status = "active";
+    if (template === "disabled") user.status = "disabled";
+
+    db.notifications.push({
+      id: crypto.randomUUID(),
+      to: user.address,
+      accountId: user.accountId,
+      title,
+      body,
+      createdAt: Date.now(),
+      read: false
+    });
+    sent += 1;
+
+    const delivered = await sendTelegramMessage(
+      user.telegramUserId,
+      `${title}\n${body}\nAccount: ${user.accountId}`
+    );
+    if (delivered) telegramSent += 1;
+  }
+  saveDb();
+
+  res.json({ sent, telegramSent, telegramSkipped: sent - telegramSent });
+});
+
+app.get("/notifications/:address", (req, res) => {
+  const match = findUserByAnyAddress(normalizeAddress(req.params.address));
+  if (!match) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  const items = db.notifications
+    .filter((item) => item.to === match.canonicalAddress)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 50);
+
+  res.json({ notifications: items });
+});
+
+app.post("/notifications/:address/read", (req, res) => {
+  const match = findUserByAnyAddress(normalizeAddress(req.params.address));
+  if (!match) {
+    return res.status(404).json({ error: "User not found." });
+  }
+
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : null;
+  let marked = 0;
+  for (const item of db.notifications) {
+    if (item.to === match.canonicalAddress && (!ids || ids.includes(item.id)) && !item.read) {
+      item.read = true;
+      marked += 1;
+    }
+  }
+  saveDb();
+
+  res.json({ marked });
+});
+
 app.post("/wallet/create", (req, res) => {
   let address = generateAddress();
   while (db.users.has(address)) address = generateAddress();
 
-  const user = createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req));
+  const user = createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req), {}, resolveTelegramUsername(req));
   db.users.set(address, user);
   saveDb();
 
@@ -693,15 +827,20 @@ app.post("/wallet/import", (req, res) => {
   }
 
   if (!db.users.has(address)) {
-    db.users.set(address, createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req)));
+    db.users.set(address, createUserRecord(address, ZERO_BALANCES, resolveAccountId(req), resolveTelegramUserId(req), {}, resolveTelegramUsername(req)));
     saveDb();
   } else {
     const user = db.users.get(address);
     const telegramUserId = resolveTelegramUserId(req, user);
+    const telegramUsername = resolveTelegramUsername(req, user);
     let changed = ensureOwnerFunding(user);
     if (!user.accountId || (!user.telegramUserId && telegramUserId)) {
       user.accountId = resolveAccountId(req, user);
       user.telegramUserId = telegramUserId;
+      changed = true;
+    }
+    if (telegramUsername && user.telegramUsername !== telegramUsername) {
+      user.telegramUsername = telegramUsername;
       changed = true;
     }
     if (changed) saveDb();
@@ -718,7 +857,13 @@ app.get("/wallet/:address", (req, res) => {
     return res.status(404).json({ error: "Wallet not found." });
   }
 
-  if (ensureOwnerFunding(user)) saveDb();
+  let walletChanged = ensureOwnerFunding(user);
+  const freshUsername = resolveTelegramUsername(req, user);
+  if (freshUsername && user.telegramUsername !== freshUsername) {
+    user.telegramUsername = freshUsername;
+    walletChanged = true;
+  }
+  if (walletChanged) saveDb();
   res.json(publicUser(user));
 });
 
@@ -783,6 +928,10 @@ app.post("/tx/send", (req, res) => {
   }
 
   const to = receiverMatch.canonicalAddress;
+
+  if (receiverMatch.user.status === "disabled") {
+    return res.status(403).json({ error: "The recipient account is disabled. Contact the administrator." });
+  }
 
   if (!isOwnerAddress(from)) {
     return res.status(403).json({ error: DECLINED_MESSAGE });
