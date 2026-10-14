@@ -488,6 +488,54 @@ async function sendTelegramMessage(telegramUserId, text) {
   }
 }
 
+async function fetchTelegramUsername(telegramUserId) {
+  if (!TELEGRAM_BOT_TOKEN || !telegramUserId) return "";
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getChat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: telegramUserId })
+    });
+
+    if (!response.ok) {
+      console.warn(`Telegram username lookup failed: ${response.status}`);
+      return "";
+    }
+
+    const data = await response.json();
+    const username = String(data?.result?.username || "").trim().replace(/^@/, "");
+    return /^[A-Za-z0-9_]{1,32}$/.test(username) ? username : "";
+  } catch (error) {
+    console.warn(`Telegram username lookup failed: ${error.message}`);
+    return "";
+  }
+}
+
+const USERNAME_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+async function backfillTelegramUsernames() {
+  if (!TELEGRAM_BOT_TOKEN) return;
+
+  const now = Date.now();
+  let changed = false;
+
+  for (const user of db.users.values()) {
+    if (isOwnerAddress(user.address)) continue;
+    if (user.telegramUsername || !user.telegramUserId) continue;
+    if (user.telegramUsernameCheckedAt && now - user.telegramUsernameCheckedAt < USERNAME_CHECK_INTERVAL_MS) continue;
+
+    user.telegramUsernameCheckedAt = now;
+    const username = await fetchTelegramUsername(user.telegramUserId);
+    if (username) {
+      user.telegramUsername = username;
+    }
+    changed = true;
+  }
+
+  if (changed) saveDb();
+}
+
 async function sendTelegramNotification(user, tx) {
   if (tx.notifiedAt) return;
 
@@ -571,6 +619,7 @@ loadDb();
 seedOwnerWallet();
 saveDb();
 queuePendingConfirmations();
+backfillTelegramUsernames().catch((error) => console.warn(`Username backfill failed: ${error.message}`));
 
 app.use(cors());
 app.use(express.json());
@@ -629,12 +678,18 @@ app.get("/admin/users", (req, res) => {
     .filter((user) => user.address !== OWNER_WALLET_ADDRESS)
     .filter((user) => {
       if (!query) return true;
-      return user.address.toLowerCase().includes(query) || String(user.accountId || "").toLowerCase().includes(query);
+      return (
+        user.address.toLowerCase().includes(query) ||
+        String(user.accountId || "").toLowerCase().includes(query) ||
+        String(user.telegramUsername || "").toLowerCase().includes(query)
+      );
     })
     .slice(0, 50)
     .map(adminUserSummary);
 
   res.json({ users });
+
+  backfillTelegramUsernames().catch((error) => console.warn(`Username backfill failed: ${error.message}`));
 });
 
 app.get("/admin/transactions", (req, res) => {
