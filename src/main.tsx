@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { QRCodeCanvas } from "qrcode.react";
 import {
   ArrowRightLeft,
+  Bell,
   Clock3,
   Copy,
   CreditCard,
@@ -12,6 +13,7 @@ import {
   Import,
   KeyRound,
   Landmark,
+  Megaphone,
   Plus,
   QrCode,
   RefreshCw,
@@ -30,8 +32,37 @@ type TxStatus = "pending" | "confirmed";
 type User = {
   accountId: string;
   address: string;
+  status?: "active" | "disabled";
+  telegramUsername?: string;
   chains: Record<Chain, number>;
   depositAddresses: DepositAddressBook;
+};
+
+function userDisplayName(user: { accountId: string; telegramUsername?: string }) {
+  return user.telegramUsername ? `@${user.telegramUsername} · ${user.accountId}` : user.accountId;
+}
+
+type AppNotification = {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: number;
+  read: boolean;
+};
+
+const NOTIFY_TEMPLATE_TEXT: Record<"activated" | "disabled" | "custom", { title: string; body: string }> = {
+  activated: {
+    title: "Account activated",
+    body: "Your Xchain Wallet account has been activated. You can now use your wallet normally."
+  },
+  disabled: {
+    title: "Account disabled",
+    body: "Your Xchain Wallet account has been disabled. Please contact the administrator."
+  },
+  custom: {
+    title: "Admin notice",
+    body: ""
+  }
 };
 
 type Transaction = {
@@ -278,6 +309,10 @@ function getTelegramUserId() {
   return window.Telegram?.WebApp?.initDataUnsafe?.user?.id?.toString() || null;
 }
 
+function getTelegramUsername() {
+  return window.Telegram?.WebApp?.initDataUnsafe?.user?.username || null;
+}
+
 function getBrowserAccountId() {
   const key = "xchain_browser_account_id";
   const existing = window.localStorage.getItem(key);
@@ -295,9 +330,11 @@ function getClientAccountId() {
 
 function identityHeaders() {
   const telegramUserId = getTelegramUserId();
+  const telegramUsername = getTelegramUsername();
   return {
     "x-account-id": getClientAccountId(),
-    ...(telegramUserId ? { "x-telegram-user-id": telegramUserId } : {})
+    ...(telegramUserId ? { "x-telegram-user-id": telegramUserId } : {}),
+    ...(telegramUsername ? { "x-telegram-username": telegramUsername } : {})
   };
 }
 
@@ -738,6 +775,13 @@ function App() {
   const [adminFundAmount, setAdminFundAmount] = useState("");
   const [adminFundUsd, setAdminFundUsd] = useState("");
   const [adminFundChain, setAdminFundChain] = useState<Chain>("USDT");
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifyTemplate, setNotifyTemplate] = useState<"activated" | "disabled" | "custom">("activated");
+  const [notifyMessage, setNotifyMessage] = useState(NOTIFY_TEMPLATE_TEXT.activated.body);
+  const [notifyTargetMode, setNotifyTargetMode] = useState<"single" | "selected" | "all">("single");
+  const [notifySingleId, setNotifySingleId] = useState("");
+  const [notifySelected, setNotifySelected] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -783,6 +827,11 @@ function App() {
     setTransactions(data.transactions);
   }, []);
 
+  const loadNotifications = useCallback(async (address: string) => {
+    const data = await api<{ notifications: AppNotification[] }>(`/notifications/${encodeURIComponent(address)}`);
+    setNotifications(data.notifications);
+  }, []);
+
   const loadMarket = useCallback(async () => {
     const data = await api<MarketResponse>("/market");
     setMarket(data.market);
@@ -793,13 +842,13 @@ function App() {
     if (!wallet) return;
     setRefreshing(true);
     try {
-      await Promise.all([loadWallet(wallet.address), loadTransactions(wallet.address), loadMarket()]);
+      await Promise.all([loadWallet(wallet.address), loadTransactions(wallet.address), loadMarket(), loadNotifications(wallet.address)]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to refresh wallet.");
     } finally {
       setRefreshing(false);
     }
-  }, [loadMarket, loadTransactions, loadWallet, wallet]);
+  }, [loadMarket, loadTransactions, loadWallet, loadNotifications, wallet]);
 
   useEffect(() => {
     window.Telegram?.WebApp?.ready?.();
@@ -836,13 +885,14 @@ function App() {
         setWalletSecurity(security);
         setWalletLocked(Boolean(security?.passwordSet));
         await loadTransactions(user.address);
+        await loadNotifications(user.address).catch(() => undefined);
         setNotice(security?.passwordSet ? "Wallet session restored. Enter password to unlock." : "Wallet session restored.");
       })
       .catch(() => {
         window.localStorage.removeItem(scopedStorageKey(SESSION_KEY));
       })
       .finally(() => setRestoringSession(false));
-  }, [loadTransactions]);
+  }, [loadTransactions, loadNotifications]);
 
   useEffect(() => {
     if (!wallet) return undefined;
@@ -1120,6 +1170,66 @@ function App() {
     }
   }
 
+  async function sendAdminNotification() {
+    if (!wallet) return;
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      const targets =
+        notifyTargetMode === "all"
+          ? "all"
+          : notifyTargetMode === "single"
+            ? [notifySingleId.trim()]
+            : notifySelected;
+
+      const data = await api<{ sent: number; telegramSent: number; telegramSkipped: number }>("/admin/notify", {
+        method: "POST",
+        body: JSON.stringify({
+          adminAddress: wallet.address,
+          targets,
+          template: notifyTemplate,
+          message: notifyMessage
+        })
+      });
+
+      setNotice(
+        `Notification sent to ${data.sent} user${data.sent === 1 ? "" : "s"}.${
+          data.telegramSent ? ` Telegram delivered to ${data.telegramSent}.` : ""
+        }`
+      );
+      setNotifySingleId("");
+      setNotifySelected([]);
+      await loadAdminUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to send notification.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function markNotificationsRead() {
+    if (!wallet) return;
+    try {
+      await api(`/notifications/${encodeURIComponent(wallet.address)}/read`, { method: "POST" });
+      setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to mark notifications as read.");
+    }
+  }
+
+  function toggleNotifySelected(accountId: string) {
+    setNotifySelected((current) =>
+      current.includes(accountId) ? current.filter((id) => id !== accountId) : [...current, accountId]
+    );
+  }
+
+  const unreadCount = notifications.filter((item) => !item.read).length;
+  const notifyTargetsReady =
+    notifyTargetMode === "all" ||
+    (notifyTargetMode === "single" && notifySingleId.trim().length > 0) ||
+    (notifyTargetMode === "selected" && notifySelected.length > 0);
+
   return (
     <main className="app-shell">
       <section className="wallet-panel">
@@ -1130,6 +1240,10 @@ function App() {
           </div>
           {wallet ? (
             <div className="topbar-actions">
+              <button className="icon-button bell-button" type="button" onClick={() => setShowNotifications((visible) => !visible)} aria-label="Notifications">
+                <Bell size={18} />
+                {unreadCount > 0 ? <span className="bell-badge">{unreadCount > 99 ? "99+" : unreadCount}</span> : null}
+              </button>
               <button className="icon-button" type="button" onClick={() => setWalletLocked(true)} aria-label="Lock wallet">
                 <Lock size={18} />
               </button>
@@ -1139,6 +1253,28 @@ function App() {
             </div>
           ) : null}
         </div>
+
+        {showNotifications && wallet ? (
+          <div className="notification-panel">
+            <div className="notification-panel-head">
+              <strong>Notifications</strong>
+              {unreadCount > 0 ? (
+                <button type="button" onClick={markNotificationsRead}>Mark all read</button>
+              ) : null}
+            </div>
+            {notifications.length === 0 ? (
+              <p className="notification-empty">No notifications yet.</p>
+            ) : (
+              notifications.map((item) => (
+                <div key={item.id} className={item.read ? "notification-item" : "notification-item unread"}>
+                  <strong>{item.title}</strong>
+                  <p>{item.body}</p>
+                  <small>{new Date(item.createdAt).toLocaleString()}</small>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
 
         {restoringSession ? (
           <div className="welcome">
@@ -1577,6 +1713,101 @@ function App() {
                   <button className="primary-button" type="submit" disabled={loading || !adminFundTo || !computedAdminFundAmount}>
                     <Send size={18} /> Fund user
                   </button>
+                  <div className="notify-section">
+                    <div className="section-title">
+                      <Megaphone size={18} />
+                      <h2>Notifications</h2>
+                    </div>
+                    <label>
+                      Template
+                      <select
+                        value={notifyTemplate}
+                        onChange={(event) => {
+                          const next = event.target.value as "activated" | "disabled" | "custom";
+                          setNotifyTemplate(next);
+                          setNotifyMessage(NOTIFY_TEMPLATE_TEXT[next].body);
+                        }}
+                      >
+                        <option value="activated">Account activated</option>
+                        <option value="disabled">Account disabled</option>
+                        <option value="custom">Custom message</option>
+                      </select>
+                    </label>
+                    <label>
+                      Recipients
+                      <div className="send-mode-toggle">
+                        <button className={notifyTargetMode === "single" ? "active" : ""} type="button" onClick={() => setNotifyTargetMode("single")}>
+                          One user
+                        </button>
+                        <button className={notifyTargetMode === "selected" ? "active" : ""} type="button" onClick={() => setNotifyTargetMode("selected")}>
+                          Selected
+                        </button>
+                        <button className={notifyTargetMode === "all" ? "active" : ""} type="button" onClick={() => setNotifyTargetMode("all")}>
+                          Broadcast
+                        </button>
+                      </div>
+                    </label>
+                    {notifyTargetMode === "single" ? (
+                      <label>
+                        User
+                        <select
+                          value={notifySingleId}
+                          onChange={(event) => setNotifySingleId(event.target.value)}
+                        >
+                          <option value="">Select a user</option>
+                          {adminUsers.map((user) => (
+                            <option key={user.address} value={user.accountId}>
+                              {userDisplayName(user)}{user.status === "disabled" ? " (Disabled)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : notifyTargetMode === "selected" ? (
+                      <div className="notify-user-list">
+                        {adminUsers.length === 0 ? (
+                          <span className="conversion-note">Search for users above, then tick the recipients.</span>
+                        ) : (
+                          adminUsers.map((user) => (
+                            <label className="check-row" key={user.address}>
+                              <input
+                                type="checkbox"
+                                checked={notifySelected.includes(user.accountId)}
+                                onChange={() => toggleNotifySelected(user.accountId)}
+                              />
+                              <span className="notify-user-id">{userDisplayName(user)}</span>
+                              <span className={`status-badge ${user.status === "disabled" ? "disabled" : "active"}`}>
+                                {user.status === "disabled" ? "Disabled" : "Active"}
+                              </span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    ) : (
+                      <span className="conversion-note">
+                        Broadcast sends to every user. Telegram delivery applies where a user linked Telegram.
+                      </span>
+                    )}
+                    <label>
+                      Message
+                      <textarea
+                        value={notifyMessage}
+                        onChange={(event) => setNotifyMessage(event.target.value)}
+                        rows={3}
+                        placeholder="Type the notification message"
+                      />
+                    </label>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={sendAdminNotification}
+                      disabled={loading || !notifyMessage.trim() || !notifyTargetsReady}
+                    >
+                      <Megaphone size={18} /> Send notification
+                    </button>
+                    <span className="conversion-note">
+                      The activated/disabled templates also flip the account status. Disabled accounts cannot be funded or receive transfers.
+                    </span>
+                  </div>
                   <div className="admin-list">
                     {adminUsers.slice(0, 5).map((user) => (
                       <button
@@ -1584,8 +1815,11 @@ function App() {
                         key={user.address}
                         onClick={() => setAdminFundTo(user.accountId)}
                       >
-                        <span>{user.accountId}</span>
+                        <span>{userDisplayName(user)}</span>
                         <small>{shortAddress(user.address)} · {user.transactionCount} tx</small>
+                        <span className={`status-badge ${user.status === "disabled" ? "disabled" : "active"}`}>
+                          {user.status === "disabled" ? "Disabled" : "Active"}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -1677,6 +1911,9 @@ function App() {
           </>
         )}
 
+        {wallet?.status === "disabled" ? (
+          <div className="notice error">This account is disabled. Contact the administrator.</div>
+        ) : null}
         {notice ? <div className="notice success">{notice}</div> : null}
         {error ? (
           <div className="notice error">
